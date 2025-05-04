@@ -286,29 +286,6 @@ My New Gearプロジェクトはコンテナ化されており、Docker Compose�
 | app      | Honoアプリケーションサーバー | 3000:3000 |
 | postgres | PostgreSQLデータベース       | 5432:5432 |
 
-### 環境変数
-
-Dockerコンテナは`.env`ファイルから環境変数を読み込みます。主要な環境変数は以下の通りです：
-
-```
-# アプリケーション設定
-NODE_ENV=development
-PORT=3000
-HOST=localhost
-
-# データベース設定
-DB_HOST=postgres
-DB_PORT=5432
-DB_USER=postgres
-DB_PASSWORD=postgres
-DB_NAME=my_new_gear
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/my_new_gear
-
-# JWT認証設定
-JWT_SECRET=dev_secret_key
-JWT_EXPIRES_IN=7d
-```
-
 ### 起動方法
 
 以下のコマンドでDockerコンテナを起動できます：
