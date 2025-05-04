@@ -216,6 +216,7 @@ Notification ----------- |
 | ORM                | Drizzle    | TypeScript用の型安全なSQLツールキット    |
 | 型とバリデーション | Zod        | TypeScript用のスキーマ検証ライブラリ     |
 | データベース       | PostgreSQL | 強力な関係データベース                   |
+| ビルドツール       | Vite       | 高速なWebアプリケーションビルドツール    |
 
 ## 10. Docker設定
 
