@@ -3,6 +3,9 @@ import { Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { cors } from 'hono/cors';
 import { config } from './config/env';
+import authRouter from './controllers/auth.controller';
+import userRouter from './controllers/user.controller';
+import itemRouter from './controllers/item.controller';
 // 残りのルートは後で追加します
 
 const app = new Hono();
@@ -15,8 +18,9 @@ app.use('*', cors());
 app.get('/', (c) => c.json({ status: 'ok', message: 'My New Gear API is running' }));
 
 // ルートの追加
-// app.route('/api/auth', authRoutes);
-// app.route('/api/users', userRoutes);
+app.route('/api/auth', authRouter);
+app.route('/api/users', userRouter);
+app.route('/api/items', itemRouter);
 // 残りのルートは後で追加します
 
 // サーバーの起動

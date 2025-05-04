@@ -1,6 +1,7 @@
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { config } from '../config/env';
+import * as schema from './schema';
 
 // データベース接続URLの構築
 const connectionString = `postgres://${config.DB_USER}:${config.DB_PASSWORD}@${config.DB_HOST}:${config.DB_PORT}/${config.DB_NAME}`;
@@ -12,7 +13,7 @@ const sql = postgres(connectionString, {
 });
 
 // Drizzle ORMの初期化
-export const db = drizzle(sql);
+export const db = drizzle(sql, { schema });
 
 // 接続のテスト関数
 export async function testConnection() {

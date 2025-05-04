@@ -1,40 +1,65 @@
-import { Context } from 'hono';
-import { signupUser, loginUser } from '../services/auth.service';
-import { signupSchema, loginSchema, SignupInput, LoginInput } from '../models/auth.model';
+import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
-import { z } from 'zod';
+import { HTTPException } from 'hono/http-exception';
+import { loginSchema, signupSchema } from '../models/auth.model';
+import { loginUser, signupUser } from '../services/auth.service';
+
+// 認証関連のルーターを作成
+const authRouter = new Hono();
 
 /**
- * サインアップ処理
+ * ユーザー登録エンドポイント
+ * POST /auth/signup
  */
-export const handleSignup = zValidator('json', signupSchema, (result, c: Context) => {
-  if (!result.success) {
-    return c.json({ error: result.error.flatten().fieldErrors }, 400);
+authRouter.post('/signup', zValidator('json', signupSchema), async (c) => {
+  try {
+    const input = c.req.valid('json');
+    const user = await signupUser(input);
+
+    // パスワードハッシュなど機密情報を除外
+    const safeUser = {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      createdAt: user.createdAt,
+    };
+
+    return c.json(
+      {
+        message: 'ユーザーが正常に登録されました',
+        user: safeUser,
+      },
+      201
+    );
+  } catch (error) {
+    if (error instanceof HTTPException) {
+      throw error;
+    }
+    console.error('ユーザー登録中にエラーが発生しました:', error);
+    throw new HTTPException(500, { message: 'サーバーエラーが発生しました' });
   }
-
-  // result.dataの型推論が効くように修正
-  const signupData = result.data as SignupInput;
-
-  return (async () => {
-    const user = await signupUser(signupData);
-    const { passwordHash, ...userWithoutPassword } = user;
-    return c.json(userWithoutPassword, 201);
-  })();
 });
 
 /**
- * ログイン処理
+ * ログインエンドポイント
+ * POST /auth/login
  */
-export const handleLogin = zValidator('json', loginSchema, (result, c: Context) => {
-  if (!result.success) {
-    return c.json({ error: result.error.flatten().fieldErrors }, 400);
+authRouter.post('/login', zValidator('json', loginSchema), async (c) => {
+  try {
+    const input = c.req.valid('json');
+    const token = await loginUser(input);
+
+    return c.json({
+      message: 'ログインに成功しました',
+      token,
+    });
+  } catch (error) {
+    if (error instanceof HTTPException) {
+      throw error;
+    }
+    console.error('ログイン中にエラーが発生しました:', error);
+    throw new HTTPException(500, { message: 'サーバーエラーが発生しました' });
   }
-
-  // result.dataの型推論が効くように修正
-  const loginData = result.data as LoginInput;
-
-  return (async () => {
-    const token = await loginUser(loginData);
-    return c.json({ token });
-  })();
 });
+
+export default authRouter;
