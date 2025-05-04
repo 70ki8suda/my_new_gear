@@ -7,6 +7,7 @@ import authRouter from './controllers/auth.controller';
 import userRouter from './controllers/user.controller';
 import itemRouter from './controllers/item.controller';
 import postRouter from './controllers/post.controller';
+import tagRouter from './controllers/tag.controller';
 // 残りのルートは後で追加します
 
 const app = new Hono();
@@ -23,6 +24,7 @@ app.route('/api/auth', authRouter);
 app.route('/api/users', userRouter);
 app.route('/api/items', itemRouter);
 app.route('/api/posts', postRouter);
+app.route('/api/tags', tagRouter);
 // 残りのルートは後で追加します
 
 // サーバーの起動
