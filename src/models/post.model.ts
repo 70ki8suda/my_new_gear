@@ -1,8 +1,9 @@
 import { z } from 'zod';
+import { ItemIdSchema } from '../types/branded.d'; // ItemIdSchema をインポート
 
 // ポスト作成用スキーマ
 export const createPostSchema = z.object({
-  itemId: z.number().int().positive({ message: '有効なアイテムIDを指定してください' }),
+  itemId: ItemIdSchema, // スキーマを使用
   content: z
     .string()
     .min(1, { message: '投稿内容を入力してください' })

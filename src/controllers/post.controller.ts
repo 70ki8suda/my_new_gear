@@ -5,6 +5,13 @@ import { authMiddleware } from '../middlewares/auth.middleware';
 import { createPostSchema } from '../models/post.model';
 import { createPost, getPostById, getItemPosts } from '../services/post.service';
 import { likePost, unlikePost } from '../services/like.service';
+import { PostIdSchema, ItemIdSchema } from '../types/branded.d';
+import { z } from 'zod';
+
+// --- パラメータ検証スキーマ (コントローラーファイル内に定義) ---
+const postIdParamSchema = z.object({ postId: PostIdSchema });
+const itemIdParamSchema = z.object({ itemId: ItemIdSchema });
+// --- ここまで ---
 
 const postRouter = new Hono();
 
@@ -41,13 +48,9 @@ postRouter.post('/', authMiddleware, zValidator('json', createPostSchema), async
  * 特定のポストを取得
  * GET /api/posts/:postId
  */
-postRouter.get('/:postId', async (c) => {
+postRouter.get('/:postId', zValidator('param', postIdParamSchema), async (c) => {
   try {
-    const postId = parseInt(c.req.param('postId'), 10);
-    if (isNaN(postId)) {
-      throw new HTTPException(400, { message: '無効なポストIDです' });
-    }
-
+    const { postId } = c.req.valid('param');
     const post = await getPostById(postId);
 
     return c.json({ post });
@@ -68,13 +71,9 @@ postRouter.get('/:postId', async (c) => {
 // 注意: このルートは itemRouter に移動する方が適切かもしれません。
 // itemRouter.get('/:itemId/posts', ...) のように。
 // 今回は postRouter に実装します。
-postRouter.get('/item/:itemId', async (c) => {
+postRouter.get('/item/:itemId', zValidator('param', itemIdParamSchema), async (c) => {
   try {
-    const itemId = parseInt(c.req.param('itemId'), 10);
-    if (isNaN(itemId)) {
-      throw new HTTPException(400, { message: '無効なアイテムIDです' });
-    }
-
+    const { itemId } = c.req.valid('param');
     const posts = await getItemPosts(itemId);
 
     return c.json({ posts });
@@ -91,13 +90,10 @@ postRouter.get('/item/:itemId', async (c) => {
  * 特定のポストにいいねする
  * POST /api/posts/:postId/like
  */
-postRouter.post('/:postId/like', authMiddleware, async (c) => {
+postRouter.post('/:postId/like', authMiddleware, zValidator('param', postIdParamSchema), async (c) => {
   try {
     const user = c.get('user');
-    const postId = parseInt(c.req.param('postId'), 10);
-    if (isNaN(postId)) {
-      throw new HTTPException(400, { message: '無効なポストIDです' });
-    }
+    const { postId } = c.req.valid('param');
 
     const result = await likePost(user.id, postId);
 
@@ -118,13 +114,10 @@ postRouter.post('/:postId/like', authMiddleware, async (c) => {
  * 特定のポストのいいねを取り消す
  * DELETE /api/posts/:postId/like
  */
-postRouter.delete('/:postId/like', authMiddleware, async (c) => {
+postRouter.delete('/:postId/like', authMiddleware, zValidator('param', postIdParamSchema), async (c) => {
   try {
     const user = c.get('user');
-    const postId = parseInt(c.req.param('postId'), 10);
-    if (isNaN(postId)) {
-      throw new HTTPException(400, { message: '無効なポストIDです' });
-    }
+    const { postId } = c.req.valid('param');
 
     const result = await unlikePost(user.id, postId);
 

@@ -261,6 +261,7 @@ Notification ----------- |
 - 全文検索: **PostgreSQL FTS** で実装
 - リアルタイム: **ポーリング**
 - データベース: **PostgreSQL**
+- **IDの型安全性**: `UserId`, `ItemId`, `PostId` などのIDを表す数値型には、誤用を防ぐために **Branded Types** を使用します。これにより、例えば `UserId` を期待する箇所に誤って `PostId` を渡してしまうといったミスをコンパイル時に検出できます。
 
 ---
 

@@ -3,6 +3,7 @@ import { items, type NewItem } from '../db/schema';
 import { type CreateItemInput, type UpdateItemInput } from '../models/item.model';
 import { HTTPException } from 'hono/http-exception';
 import { and, eq } from 'drizzle-orm';
+import type { UserId, ItemId, PhotoId } from '../types/branded.d';
 
 /**
  * ユーザーのアイテムを作成します
@@ -10,17 +11,22 @@ import { and, eq } from 'drizzle-orm';
  * @param input アイテム作成情報
  * @returns 作成されたアイテム
  */
-export const createItem = async (userId: number, input: CreateItemInput) => {
+export const createItem = async (userId: UserId, input: CreateItemInput) => {
   const newItem: NewItem = {
-    userId,
+    userId: userId as number,
     name: input.name,
     description: input.description,
-    defaultPhotoId: input.defaultPhotoId,
+    defaultPhotoId: input.defaultPhotoId as number | null,
     createdAt: new Date(),
   };
 
   const result = await db.insert(items).values(newItem).returning();
-  return result[0];
+  return {
+    ...result[0],
+    id: result[0].id as ItemId,
+    userId: result[0].userId as UserId,
+    defaultPhotoId: result[0].defaultPhotoId as PhotoId | null,
+  };
 };
 
 /**
@@ -28,9 +34,17 @@ export const createItem = async (userId: number, input: CreateItemInput) => {
  * @param userId ユーザーID
  * @returns アイテム一覧
  */
-export const getUserItems = async (userId: number) => {
-  const userItems = await db.select().from(items).where(eq(items.userId, userId));
-  return userItems;
+export const getUserItems = async (userId: UserId) => {
+  const userItems = await db
+    .select()
+    .from(items)
+    .where(eq(items.userId, userId as number));
+  return userItems.map((item) => ({
+    ...item,
+    id: item.id as ItemId,
+    userId: item.userId as UserId,
+    defaultPhotoId: item.defaultPhotoId as PhotoId | null,
+  }));
 };
 
 /**
@@ -38,14 +52,23 @@ export const getUserItems = async (userId: number) => {
  * @param itemId アイテムID
  * @returns アイテム情報
  */
-export const getItemById = async (itemId: number) => {
-  const item = await db.select().from(items).where(eq(items.id, itemId)).limit(1);
+export const getItemById = async (itemId: ItemId) => {
+  const item = await db
+    .select()
+    .from(items)
+    .where(eq(items.id, itemId as number))
+    .limit(1);
 
   if (item.length === 0) {
     throw new HTTPException(404, { message: 'アイテムが見つかりませんでした' });
   }
 
-  return item[0];
+  return {
+    ...item[0],
+    id: item[0].id as ItemId,
+    userId: item[0].userId as UserId,
+    defaultPhotoId: item[0].defaultPhotoId as PhotoId | null,
+  };
 };
 
 /**
@@ -55,12 +78,12 @@ export const getItemById = async (itemId: number) => {
  * @param input 更新情報
  * @returns 更新されたアイテム
  */
-export const updateItem = async (userId: number, itemId: number, input: UpdateItemInput) => {
+export const updateItem = async (userId: UserId, itemId: ItemId, input: UpdateItemInput) => {
   // アイテムが存在し、ユーザーが所有者かチェック
   const existingItem = await db
     .select()
     .from(items)
-    .where(and(eq(items.id, itemId), eq(items.userId, userId)))
+    .where(and(eq(items.id, itemId as number), eq(items.userId, userId as number)))
     .limit(1);
 
   if (existingItem.length === 0) {
@@ -71,7 +94,7 @@ export const updateItem = async (userId: number, itemId: number, input: UpdateIt
   const updateData = {
     ...(input.name !== undefined && { name: input.name }),
     ...(input.description !== undefined && { description: input.description }),
-    ...(input.defaultPhotoId !== undefined && { defaultPhotoId: input.defaultPhotoId }),
+    ...(input.defaultPhotoId !== undefined && { defaultPhotoId: input.defaultPhotoId as number | null }),
     updatedAt: new Date(),
   };
 
@@ -85,10 +108,15 @@ export const updateItem = async (userId: number, itemId: number, input: UpdateIt
   const updatedItem = await db
     .update(items)
     .set(updateData)
-    .where(and(eq(items.id, itemId), eq(items.userId, userId)))
+    .where(and(eq(items.id, itemId as number), eq(items.userId, userId as number)))
     .returning();
 
-  return updatedItem[0];
+  return {
+    ...updatedItem[0],
+    id: updatedItem[0].id as ItemId,
+    userId: updatedItem[0].userId as UserId,
+    defaultPhotoId: updatedItem[0].defaultPhotoId as PhotoId | null,
+  };
 };
 
 /**
@@ -97,12 +125,12 @@ export const updateItem = async (userId: number, itemId: number, input: UpdateIt
  * @param itemId アイテムID
  * @returns 削除操作の成功状態
  */
-export const deleteItem = async (userId: number, itemId: number) => {
+export const deleteItem = async (userId: UserId, itemId: ItemId) => {
   // アイテムが存在し、ユーザーが所有者かチェック
   const existingItem = await db
     .select()
     .from(items)
-    .where(and(eq(items.id, itemId), eq(items.userId, userId)))
+    .where(and(eq(items.id, itemId as number), eq(items.userId, userId as number)))
     .limit(1);
 
   if (existingItem.length === 0) {
@@ -110,7 +138,7 @@ export const deleteItem = async (userId: number, itemId: number) => {
   }
 
   // アイテムを削除
-  await db.delete(items).where(and(eq(items.id, itemId), eq(items.userId, userId)));
+  await db.delete(items).where(and(eq(items.id, itemId as number), eq(items.userId, userId as number)));
 
   return { success: true };
 };

@@ -2,6 +2,7 @@ import { Context, Next } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import jwt from 'jsonwebtoken';
 import { config } from '../config/env';
+import type { UserId } from '../types/branded.d';
 
 /**
  * JWTトークンの型定義
@@ -36,9 +37,9 @@ export const authMiddleware = async (c: Context, next: Next) => {
     try {
       const decoded = jwt.verify(token, config.JWT_SECRET) as JwtPayload;
 
-      // ユーザー情報をコンテキストに追加
+      // ユーザー情報をコンテキストに追加 (UserId にキャスト)
       c.set('user', {
-        id: decoded.userId,
+        id: decoded.userId as UserId,
         username: decoded.username,
       });
 

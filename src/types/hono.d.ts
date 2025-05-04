@@ -1,7 +1,8 @@
+import type { UserId } from './branded.d';
 import { JwtPayload } from '../middlewares/auth.middleware';
 
 type UserInfo = {
-  id: number;
+  id: UserId;
   username: string;
 };
 
