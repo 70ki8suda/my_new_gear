@@ -3,8 +3,10 @@ import { zValidator } from '@hono/zod-validator';
 import { HTTPException } from 'hono/http-exception';
 import { authMiddleware } from '../middlewares/auth.middleware';
 import { createPostSchema } from '../models/post.model';
+import { createCommentSchema } from '../models/comment.model';
 import { createPost, getPostById, getItemPosts } from '../services/post.service';
 import { likePost, unlikePost } from '../services/like.service';
+import { createComment, getPostComments } from '../services/comment.service';
 import { PostIdSchema, ItemIdSchema } from '../types/branded.d';
 import { z } from 'zod';
 
@@ -130,6 +132,54 @@ postRouter.delete('/:postId/like', authMiddleware, zValidator('param', postIdPar
       throw error;
     }
     console.error('いいね取り消し処理中にエラーが発生しました:', error);
+    throw new HTTPException(500, { message: 'サーバーエラーが発生しました' });
+  }
+});
+
+/**
+ * 特定のポストにコメントを作成
+ * POST /api/posts/:postId/comments
+ */
+postRouter.post(
+  '/:postId/comments',
+  authMiddleware,
+  zValidator('param', postIdParamSchema),
+  zValidator('json', createCommentSchema),
+  async (c) => {
+    try {
+      const user = c.get('user');
+      const { postId } = c.req.valid('param');
+      const input = c.req.valid('json');
+
+      const comment = await createComment(user.id, postId, input);
+
+      return c.json(
+        {
+          message: 'コメントが投稿されました',
+          comment,
+        },
+        201
+      );
+    } catch (error) {
+      if (error instanceof HTTPException) throw error;
+      console.error('コメント作成中にエラーが発生しました:', error);
+      throw new HTTPException(500, { message: 'サーバーエラーが発生しました' });
+    }
+  }
+);
+
+/**
+ * 特定のポストのコメント一覧を取得
+ * GET /api/posts/:postId/comments
+ */
+postRouter.get('/:postId/comments', zValidator('param', postIdParamSchema), async (c) => {
+  try {
+    const { postId } = c.req.valid('param');
+    const comments = await getPostComments(postId);
+    return c.json({ comments });
+  } catch (error) {
+    if (error instanceof HTTPException) throw error;
+    console.error('コメント一覧取得中にエラーが発生しました:', error);
     throw new HTTPException(500, { message: 'サーバーエラーが発生しました' });
   }
 });
