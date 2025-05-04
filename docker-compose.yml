@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  # アプリケーションサービス
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - ${PORT:-3000}:${PORT:-3000}
+    environment:
+      - NODE_ENV=${NODE_ENV:-development}
+      - PORT=${PORT:-3000}
+      - HOST=0.0.0.0
+      # コンテナ内部のDB接続先はサービス名(db)を使用
+      - DATABASE_URL=postgres://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:${DB_PORT:-5432}/${DB_NAME:-my_new_gear}
+      - JWT_SECRET=${JWT_SECRET:-dev_secret_key}
+      - JWT_EXPIRES_IN=${JWT_EXPIRES_IN:-7d}
+    depends_on:
+      - db
+    volumes:
+      - ./:/app
+      - /app/node_modules
+    command: pnpm dev
+    restart: unless-stopped
+
+  # PostgreSQLデータベースサービス
+  db:
+    image: postgres:15-alpine
+    ports:
+      # ホスト側のポートは.envから読み込み
+      - ${DB_PORT:-5432}:5432
+    environment:
+      - POSTGRES_USER=${DB_USER:-postgres}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-postgres}
+      - POSTGRES_DB=${DB_NAME:-my_new_gear}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+# 永続化ボリューム
+volumes:
+  postgres_data:

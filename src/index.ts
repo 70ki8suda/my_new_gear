@@ -1,0 +1,29 @@
+import { serve } from '@hono/node-server';
+import { Hono } from 'hono';
+import { logger } from 'hono/logger';
+import { cors } from 'hono/cors';
+import { config } from './config/env';
+// 残りのルートは後で追加します
+
+const app = new Hono();
+
+// ミドルウェアの設定
+app.use('*', logger());
+app.use('*', cors());
+
+// ヘルスチェックエンドポイント
+app.get('/', (c) => c.json({ status: 'ok', message: 'My New Gear API is running' }));
+
+// ルートの追加
+// app.route('/api/auth', authRoutes);
+// app.route('/api/users', userRoutes);
+// 残りのルートは後で追加します
+
+// サーバーの起動
+const port = config.PORT;
+console.log(`Server is running on port ${port}`);
+
+serve({
+  fetch: app.fetch,
+  port,
+});
