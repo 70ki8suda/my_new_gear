@@ -3,6 +3,14 @@ import { likes, posts, type NewLike } from '../db/schema';
 import { HTTPException } from 'hono/http-exception';
 import { and, eq, count } from 'drizzle-orm';
 import type { UserId, PostId } from '../types/branded.d';
+import { z } from 'zod';
+
+// like/unlike の戻り値スキーマ
+const LikeActionResultSchema = z.object({
+  success: z.literal(true),
+  likesCount: z.number().int().min(0),
+  message: z.string().optional(),
+});
 
 /**
  * 指定された投稿にいいねを追加します
@@ -33,7 +41,13 @@ export const likePost = async (userId: UserId, postId: PostId) => {
       .select({ count: count() })
       .from(likes)
       .where(eq(likes.postId, postId as number));
-    return { success: true, likesCount: likesCountResult[0].count, message: '既にいいねしています' };
+    const resultObject = { success: true, likesCount: likesCountResult[0].count, message: '既にいいねしています' };
+    try {
+      return LikeActionResultSchema.parse(resultObject);
+    } catch (error) {
+      console.error('Failed to parse like result:', error);
+      throw new HTTPException(500, { message: 'いいね後のデータ形式エラー' });
+    }
   }
 
   // いいねをデータベースに挿入
@@ -49,7 +63,13 @@ export const likePost = async (userId: UserId, postId: PostId) => {
     .select({ count: count() })
     .from(likes)
     .where(eq(likes.postId, postId as number));
-  return { success: true, likesCount: likesCountResult[0].count };
+  const resultObject = { success: true, likesCount: likesCountResult[0].count };
+  try {
+    return LikeActionResultSchema.parse(resultObject);
+  } catch (error) {
+    console.error('Failed to parse like result:', error);
+    throw new HTTPException(500, { message: 'いいね後のデータ形式エラー' });
+  }
 };
 
 /**
@@ -81,7 +101,13 @@ export const unlikePost = async (userId: UserId, postId: PostId) => {
       .select({ count: count() })
       .from(likes)
       .where(eq(likes.postId, postId as number));
-    return { success: true, likesCount: likesCountResult[0].count, message: 'いいねされていません' };
+    const resultObject = { success: true, likesCount: likesCountResult[0].count, message: 'いいねされていません' };
+    try {
+      return LikeActionResultSchema.parse(resultObject);
+    } catch (error) {
+      console.error('Failed to parse unlike result:', error);
+      throw new HTTPException(500, { message: 'いいね解除後のデータ形式エラー' });
+    }
   }
 
   // いいねをデータベースから削除
@@ -92,5 +118,11 @@ export const unlikePost = async (userId: UserId, postId: PostId) => {
     .select({ count: count() })
     .from(likes)
     .where(eq(likes.postId, postId as number));
-  return { success: true, likesCount: likesCountResult[0].count };
+  const resultObject = { success: true, likesCount: likesCountResult[0].count };
+  try {
+    return LikeActionResultSchema.parse(resultObject);
+  } catch (error) {
+    console.error('Failed to parse unlike result:', error);
+    throw new HTTPException(500, { message: 'いいね解除後のデータ形式エラー' });
+  }
 };

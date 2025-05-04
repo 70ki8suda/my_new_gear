@@ -4,6 +4,22 @@ import { type CreateItemInput, type UpdateItemInput } from '../models/item.model
 import { HTTPException } from 'hono/http-exception';
 import { and, eq } from 'drizzle-orm';
 import type { UserId, ItemId, PhotoId } from '../types/branded.d';
+import { z } from 'zod';
+import { UserIdSchema, ItemIdSchema, PhotoIdSchema } from '../types/branded.d';
+
+// アイテム戻り値のZodスキーマ
+const ItemSchema = z.object({
+  id: ItemIdSchema,
+  userId: UserIdSchema,
+  name: z.string(),
+  description: z.string().nullable(),
+  defaultPhotoId: PhotoIdSchema.nullable(),
+  createdAt: z.date(),
+  updatedAt: z.date().nullable(),
+});
+
+// deleteItem の戻り値スキーマ
+const DeleteResultSchema = z.object({ success: z.literal(true) });
 
 /**
  * ユーザーのアイテムを作成します
@@ -21,12 +37,23 @@ export const createItem = async (userId: UserId, input: CreateItemInput) => {
   };
 
   const result = await db.insert(items).values(newItem).returning();
-  return {
-    ...result[0],
-    id: result[0].id as ItemId,
-    userId: result[0].userId as UserId,
-    defaultPhotoId: result[0].defaultPhotoId as PhotoId | null,
+  const itemObject = {
+    // DBからの戻り値を整形
+    id: result[0].id,
+    userId: result[0].userId,
+    name: result[0].name,
+    description: result[0].description,
+    defaultPhotoId: result[0].defaultPhotoId,
+    createdAt: result[0].createdAt,
+    updatedAt: result[0].updatedAt,
   };
+
+  try {
+    return ItemSchema.parse(itemObject);
+  } catch (error) {
+    console.error('Failed to parse created item:', error);
+    throw new HTTPException(500, { message: 'アイテム作成後のデータ形式エラー' });
+  }
 };
 
 /**
@@ -39,12 +66,28 @@ export const getUserItems = async (userId: UserId) => {
     .select()
     .from(items)
     .where(eq(items.userId, userId as number));
-  return userItems.map((item) => ({
-    ...item,
-    id: item.id as ItemId,
-    userId: item.userId as UserId,
-    defaultPhotoId: item.defaultPhotoId as PhotoId | null,
-  }));
+
+  // 各アイテムをパースして返す (失敗したものは除外)
+  return userItems
+    .map((item) => {
+      const itemObject = {
+        // DBからの戻り値を整形
+        id: item.id,
+        userId: item.userId,
+        name: item.name,
+        description: item.description,
+        defaultPhotoId: item.defaultPhotoId,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+      };
+      try {
+        return ItemSchema.parse(itemObject);
+      } catch (error) {
+        console.error(`Failed to parse item ID ${item.id}:`, error);
+        return null;
+      }
+    })
+    .filter((item): item is z.infer<typeof ItemSchema> => item !== null);
 };
 
 /**
@@ -53,22 +96,33 @@ export const getUserItems = async (userId: UserId) => {
  * @returns アイテム情報
  */
 export const getItemById = async (itemId: ItemId) => {
-  const item = await db
+  const itemResult = await db
     .select()
     .from(items)
     .where(eq(items.id, itemId as number))
     .limit(1);
 
-  if (item.length === 0) {
+  if (itemResult.length === 0) {
     throw new HTTPException(404, { message: 'アイテムが見つかりませんでした' });
   }
-
-  return {
-    ...item[0],
-    id: item[0].id as ItemId,
-    userId: item[0].userId as UserId,
-    defaultPhotoId: item[0].defaultPhotoId as PhotoId | null,
+  const item = itemResult[0];
+  const itemObject = {
+    // DBからの戻り値を整形
+    id: item.id,
+    userId: item.userId,
+    name: item.name,
+    description: item.description,
+    defaultPhotoId: item.defaultPhotoId,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
   };
+
+  try {
+    return ItemSchema.parse(itemObject);
+  } catch (error) {
+    console.error(`Failed to parse item ID ${itemId}:`, error);
+    throw new HTTPException(500, { message: 'アイテム取得後のデータ形式エラー' });
+  }
 };
 
 /**
@@ -105,18 +159,34 @@ export const updateItem = async (userId: UserId, itemId: ItemId, input: UpdateIt
   }
 
   // アイテムを更新
-  const updatedItem = await db
+  const updatedItemArray = await db
     .update(items)
     .set(updateData)
     .where(and(eq(items.id, itemId as number), eq(items.userId, userId as number)))
     .returning();
 
-  return {
-    ...updatedItem[0],
-    id: updatedItem[0].id as ItemId,
-    userId: updatedItem[0].userId as UserId,
-    defaultPhotoId: updatedItem[0].defaultPhotoId as PhotoId | null,
+  if (updatedItemArray.length === 0) {
+    // 通常ここには来ないはず (存在チェックで弾かれるため)
+    throw new HTTPException(404, { message: '更新対象のアイテムが見つかりませんでした' });
+  }
+  const updatedItem = updatedItemArray[0];
+  const itemObject = {
+    // DBからの戻り値を整形
+    id: updatedItem.id,
+    userId: updatedItem.userId,
+    name: updatedItem.name,
+    description: updatedItem.description,
+    defaultPhotoId: updatedItem.defaultPhotoId,
+    createdAt: updatedItem.createdAt,
+    updatedAt: updatedItem.updatedAt,
   };
+
+  try {
+    return ItemSchema.parse(itemObject);
+  } catch (error) {
+    console.error(`Failed to parse updated item ID ${itemId}:`, error);
+    throw new HTTPException(500, { message: 'アイテム更新後のデータ形式エラー' });
+  }
 };
 
 /**
@@ -140,5 +210,12 @@ export const deleteItem = async (userId: UserId, itemId: ItemId) => {
   // アイテムを削除
   await db.delete(items).where(and(eq(items.id, itemId as number), eq(items.userId, userId as number)));
 
-  return { success: true };
+  // 戻り値をスキーマで parse (形式を保証するため)
+  try {
+    return DeleteResultSchema.parse({ success: true });
+  } catch (error) {
+    // 基本的にこのパースは失敗しないはずだが念のため
+    console.error('Failed to parse delete result:', error);
+    throw new HTTPException(500, { message: 'アイテム削除後の内部エラー' });
+  }
 };
