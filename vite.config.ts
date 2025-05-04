@@ -1,5 +1,9 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
+import { builtinModules } from 'module';
+
+// Node.jsの組み込みモジュール + モジュール名に/を含むパッケージを外部依存として扱う
+const external = [...builtinModules, ...builtinModules.map((m) => `node:${m}`), /^@hono\/.*/, /^drizzle-.*/];
 
 export default defineConfig({
   build: {
@@ -13,9 +17,7 @@ export default defineConfig({
         entryFileNames: '[name].js',
         format: 'esm',
       },
-      external: [
-        // 外部依存関係を追加
-      ],
+      external,
     },
   },
 });
