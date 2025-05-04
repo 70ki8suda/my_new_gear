@@ -150,27 +150,84 @@ Notification ----------- |
 
 ## 5. REST API (v1)
 
-| Method | Path                    | 説明               |
-| ------ | ----------------------- | ------------------ |
-| POST   | /auth/signup            | サインアップ       |
-| POST   | /auth/login             | ログイン (JWT)     |
-| GET    | /feed                   | フィード取得       |
-| ---    | ---                     | ---                |
-| POST   | /items                  | アイテム作成       |
-| GET    | /items/:itemId          | アイテム詳細       |
-| ---    | ---                     | ---                |
-| POST   | /items/:itemId/posts    | ポスト作成         |
-| GET    | /posts/:postId          | ポスト詳細         |
-| POST   | /posts/:postId/like     | いいね             |
-| DELETE | /posts/:postId/like     | いいね解除         |
-| POST   | /posts/:postId/comments | コメント作成       |
-| GET    | /posts/:postId/comments | コメント一覧       |
-| ---    | ---                     | ---                |
-| POST   | /users/:userId/follow   | ユーザーをフォロー |
-| DELETE | /users/:userId/follow   | フォロー解除       |
-| POST   | /tags/:tagName/follow   | タグをフォロー     |
-| DELETE | /tags/:tagName/follow   | フォロー解除       |
-| GET    | /notifications          | 通知一覧           |
+| Method | Path                        | 説明               | リクエスト                                | レスポンス                               |
+| ------ | --------------------------- | ------------------ | ----------------------------------------- | ---------------------------------------- |
+| POST   | /api/auth/signup            | サインアップ       | `{username, email, password}`             | `{message, user: {id, username, email}}` |
+| POST   | /api/auth/login             | ログイン (JWT)     | `{email, password}`                       | `{message, token}`                       |
+| GET    | /api/users/me               | ユーザー情報取得   | Auth Header                               | `{user: {...}}`                          |
+| PUT    | /api/users/me               | ユーザー情報更新   | Auth Header, `{bio, avatarUrl}`           | `{message, user: {...}}`                 |
+| GET    | /api/feed                   | フィード取得       | Auth Header, Query params (limit, offset) | `{posts: [...]}`                         |
+| GET    | /api/items                  | アイテム一覧取得   | Auth Header                               | `{items: [...]}`                         |
+| POST   | /api/items                  | アイテム作成       | Auth Header, `{name, description}`        | `{message, item: {...}}`                 |
+| GET    | /api/items/:itemId          | アイテム詳細取得   | -                                         | `{item: {...}}`                          |
+| PUT    | /api/items/:itemId          | アイテム更新       | Auth Header, `{name, description}`        | `{message, item: {...}}`                 |
+| DELETE | /api/items/:itemId          | アイテム削除       | Auth Header                               | `{message}`                              |
+| POST   | /api/items/:itemId/posts    | ポスト作成         | Auth Header, `{content, photoUrls}`       | `{message, post: {...}}`                 |
+| GET    | /api/posts/:postId          | ポスト詳細取得     | -                                         | `{post: {...}}`                          |
+| POST   | /api/posts/:postId/like     | いいね             | Auth Header                               | `{message, likesCount}`                  |
+| DELETE | /api/posts/:postId/like     | いいね解除         | Auth Header                               | `{message, likesCount}`                  |
+| GET    | /api/posts/:postId/comments | コメント一覧取得   | Query params (limit, offset)              | `{comments: [...]}`                      |
+| POST   | /api/posts/:postId/comments | コメント作成       | Auth Header, `{content}`                  | `{message, comment: {...}}`              |
+| POST   | /api/users/:userId/follow   | ユーザーをフォロー | Auth Header                               | `{message, followersCount}`              |
+| DELETE | /api/users/:userId/follow   | フォロー解除       | Auth Header                               | `{message, followersCount}`              |
+| GET    | /api/tags                   | タグ一覧取得       | Query params (limit, offset)              | `{tags: [...]}`                          |
+| POST   | /api/tags/:tagName/follow   | タグをフォロー     | Auth Header                               | `{message, followersCount}`              |
+| DELETE | /api/tags/:tagName/follow   | タグのフォロー解除 | Auth Header                               | `{message, followersCount}`              |
+| GET    | /api/notifications          | 通知一覧取得       | Auth Header, Query params (limit, offset) | `{notifications: [...]}`                 |
+| PUT    | /api/notifications/:id/read | 通知を既読にする   | Auth Header                               | `{message, notification: {...}}`         |
+| GET    | /api/search                 | 検索               | Query params (q, type, limit, offset)     | 検索結果（タイプによって異なる）         |
+
+### エンドポイント詳細
+
+#### 認証
+
+- **POST /api/auth/signup**: 新規ユーザー登録
+
+  - リクエスト: `{username, email, password}`
+  - レスポンス: `{message: "ユーザーが正常に登録されました", user: {id, username, email, createdAt}}`
+
+- **POST /api/auth/login**: ログイン
+  - リクエスト: `{email, password}`
+  - レスポンス: `{message: "ログインに成功しました", token: "JWT_TOKEN"}`
+
+#### ユーザー管理
+
+- **GET /api/users/me**: ログインユーザーの情報取得
+
+  - 認証: 必須
+  - レスポンス: `{user: {id, username, email, bio, avatarUrl, createdAt, updatedAt}}`
+
+- **PUT /api/users/me**: ユーザー情報更新
+  - 認証: 必須
+  - リクエスト: `{bio, avatarUrl}`
+  - レスポンス: `{message: "プロフィールが更新されました", user: {...}}`
+
+#### アイテム管理
+
+- **GET /api/items**: ログインユーザーのアイテム一覧
+
+  - 認証: 必須
+  - レスポンス: `{items: [{id, name, description, ...}, ...]}`
+
+- **POST /api/items**: 新しいアイテム作成
+
+  - 認証: 必須
+  - リクエスト: `{name, description, defaultPhotoId?}`
+  - レスポンス: `{message: "アイテムが正常に作成されました", item: {...}}`
+
+- **GET /api/items/:itemId**: アイテム詳細取得
+
+  - レスポンス: `{item: {id, name, description, userId, createdAt, ...}}`
+
+- **PUT /api/items/:itemId**: アイテム更新
+
+  - 認証: 必須（所有者のみ）
+  - リクエスト: `{name?, description?, defaultPhotoId?}`
+  - レスポンス: `{message: "アイテムが正常に更新されました", item: {...}}`
+
+- **DELETE /api/items/:itemId**: アイテム削除
+  - 認証: 必須（所有者のみ）
+  - レスポンス: `{message: "アイテムが正常に削除されました"}`
 
 ---
 
