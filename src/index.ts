@@ -6,6 +6,7 @@ import { config } from './config/env';
 import authRouter from './controllers/auth.controller';
 import userRouter from './controllers/user.controller';
 import itemRouter from './controllers/item.controller';
+import postRouter from './controllers/post.controller';
 // 残りのルートは後で追加します
 
 const app = new Hono();
@@ -21,6 +22,7 @@ app.get('/', (c) => c.json({ status: 'ok', message: 'My New Gear API is running'
 app.route('/api/auth', authRouter);
 app.route('/api/users', userRouter);
 app.route('/api/items', itemRouter);
+app.route('/api/posts', postRouter);
 // 残りのルートは後で追加します
 
 // サーバーの起動
