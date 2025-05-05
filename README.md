@@ -311,3 +311,165 @@ docker-compose exec postgres psql -U postgres -d my_new_gear
 # コンテナの停止
 docker-compose down
 ```
+
+## 11. テスト
+
+このプロジェクトでは、Vitestを使用した包括的なテスト戦略を採用しています。
+
+### テスト構造
+
+- **単体テスト** (`tests/unit/`): サービス、ユーティリティ、バリデーションロジックの個別テスト
+- **統合テスト** (`tests/integration/`): ルートハンドラーとデータベースの連携テスト
+- **E2Eテスト** (`tests/e2e/`): 実際のAPIエンドポイントとユーザーフローのテスト
+
+### テストコマンド
+
+```bash
+# すべてのテストを実行
+pnpm test
+
+# 単体テストのみ実行
+pnpm test:unit
+
+# 統合テストのみ実行
+pnpm test:integration
+
+# E2Eテストのみ実行
+pnpm test:e2e
+
+# カバレッジレポートを生成
+pnpm test:coverage
+```
+
+### テスト環境の設定
+
+1. テスト用のデータベースは `docker-compose.test.yml` で提供されています
+2. テスト実行前に `pnpm db:migrate:test` でテスト用DBのマイグレーションを実行してください
+3. 詳細な設定は `vitest.config.ts` と `tests/setup.ts` を参照してください
+
+### テスト実装例
+
+#### 単体テスト例（サービス）
+
+```typescript
+// tests/unit/services/auth.service.test.ts
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { loginUser, signupUser } from '../../../src/services/auth.service';
+import { mockDb } from '../../mocks/db';
+import { HTTPException } from 'hono/http-exception';
+
+// モックの設定
+vi.mock('../../../src/db', () => ({
+  db: mockDb,
+}));
+
+describe('Auth Service', () => {
+  beforeEach(() => {
+    // テスト毎にモックをリセット
+    vi.clearAllMocks();
+  });
+
+  describe('signupUser', () => {
+    it('should create a new user', async () => {
+      // モックの戻り値を設定
+      mockDb.execute.mockResolvedValueOnce([{ id: 1, username: 'testuser' }]);
+
+      const result = await signupUser({
+        username: 'testuser',
+        email: 'test@example.com',
+        password: 'Password123!',
+      });
+
+      expect(result).toHaveProperty('id', 1);
+      expect(result).toHaveProperty('username', 'testuser');
+    });
+  });
+});
+```
+
+#### 統合テスト例（ルート）
+
+```typescript
+// tests/integration/routes/auth.route.test.ts
+import { describe, it, expect, beforeEach } from 'vitest';
+import { app } from '../../../src';
+import { db } from '../../../src/db';
+
+describe('Auth Routes', () => {
+  beforeEach(async () => {
+    // テストDBをクリーンに
+    await db.delete('users').execute();
+  });
+
+  describe('POST /api/auth/signup', () => {
+    it('should register a new user', async () => {
+      const res = await app.request('/api/auth/signup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: 'testuser',
+          email: 'test@example.com',
+          password: 'Password123!',
+        }),
+      });
+
+      expect(res.status).toBe(201);
+      const data = await res.json();
+      expect(data).toHaveProperty('message');
+      expect(data).toHaveProperty('user.username', 'testuser');
+    });
+  });
+});
+```
+
+#### E2Eテスト例（フロー）
+
+```typescript
+// tests/e2e/flows/user-item-flow.test.ts
+import { describe, it, expect, beforeAll } from 'vitest';
+import { app } from '../../../src';
+
+describe('User Item Flow', () => {
+  let authToken: string;
+  let userId: number;
+  let itemId: number;
+
+  beforeAll(async () => {
+    // ユーザー登録
+    const signupRes = await app.request('/api/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: 'flowuser',
+        email: 'flow@example.com',
+        password: 'Password123!',
+      }),
+    });
+
+    const signupData = await signupRes.json();
+    userId = signupData.user.id;
+
+    // ログイン
+    const loginRes = await app.request('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'flow@example.com',
+        password: 'Password123!',
+      }),
+    });
+
+    const loginData = await loginRes.json();
+    authToken = loginData.token;
+  });
+
+  it('should allow user to create and retrieve items', async () => {
+    // アイテム作成テスト
+    // ...
+    // アイテム取得テスト
+    // ...
+  });
+});
+```
