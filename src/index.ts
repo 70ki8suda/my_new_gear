@@ -3,13 +3,14 @@ import { Hono } from 'hono';
 import { logger } from 'hono/logger';
 import { cors } from 'hono/cors';
 import { config } from './config/env';
-import authRouter from './controllers/auth.controller';
-import userRouter from './controllers/user.controller';
-import itemRouter from './controllers/item.controller';
-import postRouter from './controllers/post.controller';
-import tagRouter from './controllers/tag.controller';
-import feedRouter from './controllers/feed.controller';
-import notificationRouter from './controllers/notification.controller';
+import authRouter from './routes/auth.route';
+import userRouter from './routes/user.route';
+import itemRouter from './routes/item.route';
+import postRouter from './routes/post.route';
+import tagRouter from './routes/tag.route';
+import feedRouter from './routes/feed.route';
+import notificationRouter from './routes/notification.route';
+import searchRouter from './routes/search.route';
 // 残りのルートは後で追加します
 
 const app = new Hono();
@@ -29,6 +30,7 @@ app.route('/api/posts', postRouter);
 app.route('/api/tags', tagRouter);
 app.route('/api/feed', feedRouter);
 app.route('/api/notifications', notificationRouter);
+app.route('/api/search', searchRouter);
 // 残りのルートは後で追加します
 
 // サーバーの起動
