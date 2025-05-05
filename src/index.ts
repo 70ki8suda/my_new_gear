@@ -33,14 +33,18 @@ app.route('/api/notifications', notificationRouter);
 app.route('/api/search', searchRouter);
 // 残りのルートは後で追加します
 
-// サーバーの起動
+// サーバーの起動（テスト環境では実行しない）
 const port = config.PORT;
-console.log(`Server is running on port ${port}`);
 
-serve({
-  fetch: app.fetch,
-  port,
-});
+// テスト環境でない場合のみサーバーを起動
+if (process.env.NODE_ENV !== 'test') {
+  console.log(`Server is running on port ${port}`);
+
+  serve({
+    fetch: app.fetch,
+    port,
+  });
+}
 
 // テストのためにアプリケーションをエクスポート
 export { app };
