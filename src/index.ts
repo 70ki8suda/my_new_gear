@@ -41,3 +41,6 @@ serve({
   fetch: app.fetch,
   port,
 });
+
+// テストのためにアプリケーションをエクスポート
+export { app };

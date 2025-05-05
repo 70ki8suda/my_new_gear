@@ -7,8 +7,8 @@ vi.mock('../../../src/db', () => ({
   db: mockDb,
 }));
 
-// bcryptのモック
-vi.mock('bcrypt', () => ({
+// bcryptjsのモック
+vi.mock('bcryptjs', () => ({
   hash: vi.fn().mockResolvedValue('hashed_password'),
   compare: vi.fn().mockImplementation((plain, hash) => Promise.resolve(plain === 'correct_password')),
 }));
@@ -16,6 +16,14 @@ vi.mock('bcrypt', () => ({
 // jwtのモック
 vi.mock('jsonwebtoken', () => ({
   sign: vi.fn().mockReturnValue('mock_jwt_token'),
+}));
+
+// 環境変数のモック
+vi.mock('../../../src/config/env', () => ({
+  config: {
+    JWT_SECRET: 'test_secret',
+    JWT_EXPIRES_IN: '1d',
+  },
 }));
 
 // テスト対象のモジュールをインポート
@@ -37,13 +45,17 @@ describe('Auth Service', () => {
 
     it('ユーザーが正常に登録されること', async () => {
       // モックの戻り値を設定
-      mockDb.execute.mockResolvedValueOnce([]); // ユーザー存在チェック
+      mockDb.execute.mockResolvedValueOnce([]); // メールチェック
+      mockDb.execute.mockResolvedValueOnce([]); // ユーザー名チェック
       mockDb.execute.mockResolvedValueOnce([
         {
           id: 1,
           username: 'testuser',
           email: 'test@example.com',
+          bio: null,
+          avatarUrl: null,
           createdAt: new Date(),
+          updatedAt: null,
         },
       ]); // ユーザー作成
 
@@ -52,24 +64,24 @@ describe('Auth Service', () => {
       expect(result).toHaveProperty('id', 1);
       expect(result).toHaveProperty('username', 'testuser');
       expect(result).toHaveProperty('email', 'test@example.com');
-      expect(mockDb.execute).toHaveBeenCalledTimes(2);
-    });
-
-    it('ユーザー名が既に存在する場合はエラーを返すこと', async () => {
-      // ユーザーが既に存在する場合のモック
-      mockDb.execute.mockResolvedValueOnce([{ username: 'testuser' }]);
-
-      await expect(signupUser(signupData)).rejects.toThrow(HTTPException);
-      await expect(signupUser(signupData)).rejects.toThrow('ユーザー名が既に使用されています');
+      expect(mockDb.execute).toHaveBeenCalledTimes(3);
     });
 
     it('メールアドレスが既に存在する場合はエラーを返すこと', async () => {
-      // ユーザー名チェックは通過、メールチェックで既存ユーザーを返す
-      mockDb.execute.mockResolvedValueOnce([]);
+      // ユーザーのメールアドレスが既に存在する場合のモック
       mockDb.execute.mockResolvedValueOnce([{ email: 'test@example.com' }]);
 
       await expect(signupUser(signupData)).rejects.toThrow(HTTPException);
-      await expect(signupUser(signupData)).rejects.toThrow('メールアドレスが既に使用されています');
+      await expect(signupUser(signupData)).rejects.toThrow('このメールアドレスは既に使用されています');
+    });
+
+    it('ユーザー名が既に存在する場合はエラーを返すこと', async () => {
+      // メールはOK、ユーザー名が既存の場合
+      mockDb.execute.mockResolvedValueOnce([]);
+      mockDb.execute.mockResolvedValueOnce([{ username: 'testuser' }]);
+
+      await expect(signupUser(signupData)).rejects.toThrow(HTTPException);
+      await expect(signupUser(signupData)).rejects.toThrow('このユーザー名は既に使用されています');
     });
   });
 

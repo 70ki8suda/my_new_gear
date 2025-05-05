@@ -322,7 +322,19 @@ docker-compose down
 - **統合テスト** (`tests/integration/`): ルートハンドラーとデータベースの連携テスト
 - **E2Eテスト** (`tests/e2e/`): 実際のAPIエンドポイントとユーザーフローのテスト
 
-### テストコマンド
+### テスト実行手順
+
+#### 1. テスト環境のセットアップ
+
+```bash
+# テスト用のDockerコンテナを起動（PostgreSQLテスト用DB）
+docker-compose -f docker-compose.test.yml up -d postgres_test
+
+# テスト用DBのマイグレーションを実行
+pnpm db:migrate:test
+```
+
+#### 2. テストの実行
 
 ```bash
 # すべてのテストを実行
@@ -337,9 +349,38 @@ pnpm test:integration
 # E2Eテストのみ実行
 pnpm test:e2e
 
+# テストを監視モードで実行（ファイル変更時に自動実行）
+pnpm test:watch
+
 # カバレッジレポートを生成
 pnpm test:coverage
 ```
+
+#### 3. Dockerを使ったテスト実行
+
+すべてのテストをDockerコンテナ内で実行することもできます：
+
+```bash
+# テスト用コンテナを使ってすべてのテストを実行
+docker-compose -f docker-compose.test.yml up --build
+
+# コンテナ内のテスト結果を確認
+docker-compose -f docker-compose.test.yml logs -f app_test
+
+# テスト環境のクリーンアップ
+docker-compose -f docker-compose.test.yml down
+```
+
+### テストコマンド詳細
+
+| コマンド                | 説明                                               |
+| ----------------------- | -------------------------------------------------- |
+| `pnpm test`             | すべてのテストを1回実行します                      |
+| `pnpm test:watch`       | ファイル変更を監視して自動的にテストを再実行します |
+| `pnpm test:unit`        | 単体テストのみを実行します                         |
+| `pnpm test:integration` | 統合テストのみを実行します                         |
+| `pnpm test:e2e`         | E2Eテストのみを実行します                          |
+| `pnpm test:coverage`    | テストカバレッジレポートを生成します               |
 
 ### テスト環境の設定
 
