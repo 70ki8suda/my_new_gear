@@ -4,6 +4,7 @@ import { HTTPException } from 'hono/http-exception';
 import { and, eq, count } from 'drizzle-orm';
 import type { UserId, PostId } from '../types/branded.d';
 import { z } from 'zod';
+import { createLikeNotification } from './notification.service';
 
 // like/unlike の戻り値スキーマ
 const LikeActionResultSchema = z.object({
@@ -20,14 +21,16 @@ const LikeActionResultSchema = z.object({
  */
 export const likePost = async (userId: UserId, postId: PostId) => {
   // 投稿が存在するか確認
-  const postExists = await db
-    .select({ id: posts.id })
+  const postData = await db
+    .select({ id: posts.id, authorId: posts.authorId })
     .from(posts)
     .where(eq(posts.id, postId as number))
     .limit(1);
-  if (postExists.length === 0) {
+  if (postData.length === 0) {
     throw new HTTPException(404, { message: '投稿が見つかりませんでした' });
   }
+
+  const post = postData[0];
 
   // 既にいいねしているか確認
   const existingLike = await db
@@ -57,6 +60,14 @@ export const likePost = async (userId: UserId, postId: PostId) => {
     createdAt: new Date(),
   };
   await db.insert(likes).values(newLike);
+
+  // 通知を作成（非同期で実行し、エラーが発生しても処理を続行）
+  try {
+    await createLikeNotification(post.authorId as UserId, userId, postId);
+  } catch (error) {
+    // 通知作成のエラーはログに記録するだけで、いいね処理自体は成功とする
+    console.error('いいね通知作成中にエラーが発生しました:', error);
+  }
 
   // 更新後のいいね数を取得して返す
   const likesCountResult = await db

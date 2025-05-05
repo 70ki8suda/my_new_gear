@@ -9,6 +9,7 @@ import itemRouter from './controllers/item.controller';
 import postRouter from './controllers/post.controller';
 import tagRouter from './controllers/tag.controller';
 import feedRouter from './controllers/feed.controller';
+import notificationRouter from './controllers/notification.controller';
 // 残りのルートは後で追加します
 
 const app = new Hono();
@@ -27,6 +28,7 @@ app.route('/api/items', itemRouter);
 app.route('/api/posts', postRouter);
 app.route('/api/tags', tagRouter);
 app.route('/api/feed', feedRouter);
+app.route('/api/notifications', notificationRouter);
 // 残りのルートは後で追加します
 
 // サーバーの起動
