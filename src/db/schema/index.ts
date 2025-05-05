@@ -4,6 +4,7 @@ export * from './tags';
 export * from './items';
 export * from './item_tags';
 export * from './posts';
+export * from './post_tags';
 export * from './comments';
 export * from './photos';
 export * from './follows';

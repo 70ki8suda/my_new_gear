@@ -16,22 +16,20 @@
    - タグのフォロー・アンフォロー
    - フォロー中のタグ一覧取得
 9. **タグ機能**: タグ一覧取得、詳細取得
+10. **フィード機能**:
+    - フォロー中のユーザーの投稿を時系列で取得
+    - フォロー中のタグに関連する投稿を取得
+    - 両方を統合したフィードの取得
 
 ## 次回実装予定（優先度順）
 
-1. **フィード機能**
-
-   - フォロー中のユーザーの投稿を時系列で取得
-   - フォロー中のタグに関連する投稿を取得
-   - 新規ファイル: `src/services/feed.service.ts` と `src/controllers/feed.controller.ts`
-
-2. **通知機能**
+1. **通知機能**
 
    - 通知の種類（いいね、コメント、フォローなど）の定義
    - 通知作成、一覧取得、既読機能
    - 新規ファイル: `src/services/notification.service.ts` と `src/controllers/notification.controller.ts`
 
-3. **検索機能**
+2. **検索機能**
    - ユーザー、アイテム、投稿、タグの検索
    - 新規ファイル: `src/services/search.service.ts` と `src/controllers/search.controller.ts`
 
@@ -54,6 +52,7 @@
 - follows: ユーザーフォロー関係
 - tags: タグ情報
 - tagFollows: タグフォロー関係
+- postTags: 投稿とタグの関連付け
 
 ## API設計
 
@@ -71,3 +70,4 @@ RESTful APIパターン:
 - /api/items: アイテム関連
 - /api/posts: 投稿関連
 - /api/tags: タグ関連
+- /api/feed: フィード関連
