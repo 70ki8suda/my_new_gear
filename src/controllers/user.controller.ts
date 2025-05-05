@@ -6,7 +6,14 @@ import { eq } from 'drizzle-orm';
 import { authMiddleware } from '../middlewares/auth.middleware';
 import { z } from 'zod';
 import { UserIdSchema } from '../types/branded.d';
-import { followUser, unfollowUser } from '../services/follow.service';
+import {
+  followUser,
+  unfollowUser,
+  getUserFollowCounts,
+  getFollowers,
+  getFollowing,
+  getFollowingTags,
+} from '../services/follow.service';
 import { zValidator } from '@hono/zod-validator';
 
 // --- パラメータ検証スキーマ ---
@@ -152,6 +159,78 @@ userRouter.delete('/:userId/follow', zValidator('param', userIdParamSchema), asy
   } catch (error) {
     if (error instanceof HTTPException) throw error;
     console.error('フォロー解除処理中にエラーが発生しました:', error);
+    throw new HTTPException(500, { message: 'サーバーエラーが発生しました' });
+  }
+});
+
+/**
+ * 指定したユーザーのフォロー数/フォロワー数を取得する
+ * GET /api/users/:userId/follow-counts
+ */
+userRouter.get('/:userId/follow-counts', zValidator('param', userIdParamSchema), async (c) => {
+  try {
+    const { userId } = c.req.valid('param');
+
+    const counts = await getUserFollowCounts(userId);
+
+    return c.json(counts);
+  } catch (error) {
+    if (error instanceof HTTPException) throw error;
+    console.error('フォロー数/フォロワー数取得中にエラーが発生しました:', error);
+    throw new HTTPException(500, { message: 'サーバーエラーが発生しました' });
+  }
+});
+
+/**
+ * 指定したユーザーのフォロワー一覧を取得する
+ * GET /api/users/:userId/followers
+ */
+userRouter.get('/:userId/followers', zValidator('param', userIdParamSchema), async (c) => {
+  try {
+    const { userId } = c.req.valid('param');
+
+    const followers = await getFollowers(userId);
+
+    return c.json({ followers });
+  } catch (error) {
+    if (error instanceof HTTPException) throw error;
+    console.error('フォロワー一覧取得中にエラーが発生しました:', error);
+    throw new HTTPException(500, { message: 'サーバーエラーが発生しました' });
+  }
+});
+
+/**
+ * 指定したユーザーがフォローしているユーザー一覧を取得する
+ * GET /api/users/:userId/following
+ */
+userRouter.get('/:userId/following', zValidator('param', userIdParamSchema), async (c) => {
+  try {
+    const { userId } = c.req.valid('param');
+
+    const following = await getFollowing(userId);
+
+    return c.json({ following });
+  } catch (error) {
+    if (error instanceof HTTPException) throw error;
+    console.error('フォロー中ユーザー一覧取得中にエラーが発生しました:', error);
+    throw new HTTPException(500, { message: 'サーバーエラーが発生しました' });
+  }
+});
+
+/**
+ * 指定したユーザーがフォローしているタグ一覧を取得する
+ * GET /api/users/:userId/following-tags
+ */
+userRouter.get('/:userId/following-tags', zValidator('param', userIdParamSchema), async (c) => {
+  try {
+    const { userId } = c.req.valid('param');
+
+    const followingTags = await getFollowingTags(userId);
+
+    return c.json({ followingTags });
+  } catch (error) {
+    if (error instanceof HTTPException) throw error;
+    console.error('フォロー中タグ一覧取得中にエラーが発生しました:', error);
     throw new HTTPException(500, { message: 'サーバーエラーが発生しました' });
   }
 });

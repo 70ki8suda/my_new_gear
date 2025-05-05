@@ -1,7 +1,7 @@
 import { db } from '../db';
 import { follows, users, tags, tagFollows, type NewFollow, type NewTagFollow } from '../db/schema';
 import { HTTPException } from 'hono/http-exception';
-import { and, eq, count } from 'drizzle-orm';
+import { and, eq, count, desc } from 'drizzle-orm';
 import type { UserId, TagId } from '../types/branded.d';
 import { z } from 'zod';
 import { UserIdSchema, TagIdSchema } from '../types/branded.d';
@@ -13,6 +13,23 @@ const FollowActionResultSchema = z.object({
   // followersCount: z.number().int().min(0).optional(), // 必要なら追加
   // followingCount: z.number().int().min(0).optional(), // 必要なら追加
 });
+
+// フォロー数/フォロワー数の戻り値スキーマ
+const FollowCountsSchema = z.object({
+  followersCount: z.number().int().min(0),
+  followingCount: z.number().int().min(0),
+});
+
+// ユーザー基本情報のスキーマ
+const UserInfoSchema = z.object({
+  id: UserIdSchema,
+  username: z.string(),
+  avatarUrl: z.string().nullable(),
+  bio: z.string().nullable(),
+});
+
+// ユーザーリストの戻り値スキーマ
+const UserListSchema = z.array(UserInfoSchema);
 
 /**
  * 指定されたユーザーをフォローします。
@@ -117,12 +134,156 @@ export const unfollowUser = async (followerId: UserId, followeeId: UserId) => {
   }
 };
 
-// TODO: フォロワー数/フォロー数を取得する関数を追加
-// export const getUserFollowCounts = async (userId: UserId) => { ... }
+/**
+ * ユーザーのフォロワー数とフォロー数を取得します
+ * @param userId 対象ユーザーのID
+ * @returns フォロワー数とフォロー数
+ */
+export const getUserFollowCounts = async (userId: UserId) => {
+  try {
+    // ユーザーが存在するか確認
+    const userExists = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, userId as number))
+      .limit(1);
+    if (userExists.length === 0) {
+      throw new HTTPException(404, { message: '指定されたユーザーが見つかりません' });
+    }
 
-// TODO: フォロワー/フォロー一覧を取得する関数を追加
-// export const getFollowers = async (userId: UserId) => { ... }
-// export const getFollowing = async (userId: UserId) => { ... }
+    // フォロワー数を取得
+    const followersCountResult = await db
+      .select({ count: count() })
+      .from(follows)
+      .where(eq(follows.followeeId, userId as number));
+
+    // フォロー数を取得
+    const followingCountResult = await db
+      .select({ count: count() })
+      .from(follows)
+      .where(eq(follows.followerId, userId as number));
+
+    const countObject = {
+      followersCount: followersCountResult[0].count,
+      followingCount: followingCountResult[0].count,
+    };
+
+    try {
+      return FollowCountsSchema.parse(countObject);
+    } catch (error) {
+      console.error('Failed to parse follow counts:', error);
+      throw new HTTPException(500, { message: 'フォロー数カウント結果のパースに失敗しました' });
+    }
+  } catch (error) {
+    if (error instanceof HTTPException) throw error;
+    console.error('Error getting follow counts:', error);
+    throw new HTTPException(500, { message: 'フォロー数カウント中にエラーが発生しました' });
+  }
+};
+
+/**
+ * 指定されたユーザーのフォロワー一覧を取得します
+ * @param userId 対象ユーザーのID
+ * @returns フォロワーのユーザー情報リスト
+ */
+export const getFollowers = async (userId: UserId) => {
+  try {
+    // ユーザーが存在するか確認
+    const userExists = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, userId as number))
+      .limit(1);
+    if (userExists.length === 0) {
+      throw new HTTPException(404, { message: '指定されたユーザーが見つかりません' });
+    }
+
+    // フォロワー一覧を取得
+    const followersResult = await db
+      .select({
+        id: users.id,
+        username: users.username,
+        avatarUrl: users.avatarUrl,
+        bio: users.bio,
+        createdAt: follows.createdAt, // フォロー日時
+      })
+      .from(follows)
+      .innerJoin(users, eq(follows.followerId, users.id))
+      .where(eq(follows.followeeId, userId as number))
+      .orderBy(desc(follows.createdAt)); // 最新のフォロワーから順に
+
+    // 結果を整形
+    const followersList = followersResult.map((follower) => ({
+      id: follower.id as UserId,
+      username: follower.username,
+      avatarUrl: follower.avatarUrl,
+      bio: follower.bio,
+    }));
+
+    try {
+      return UserListSchema.parse(followersList);
+    } catch (error) {
+      console.error('Failed to parse followers list:', error);
+      throw new HTTPException(500, { message: 'フォロワーリスト形式のパースに失敗しました' });
+    }
+  } catch (error) {
+    if (error instanceof HTTPException) throw error;
+    console.error('Error getting followers:', error);
+    throw new HTTPException(500, { message: 'フォロワー一覧の取得中にエラーが発生しました' });
+  }
+};
+
+/**
+ * 指定されたユーザーがフォローしているユーザー一覧を取得します
+ * @param userId 対象ユーザーのID
+ * @returns フォローしているユーザー情報リスト
+ */
+export const getFollowing = async (userId: UserId) => {
+  try {
+    // ユーザーが存在するか確認
+    const userExists = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, userId as number))
+      .limit(1);
+    if (userExists.length === 0) {
+      throw new HTTPException(404, { message: '指定されたユーザーが見つかりません' });
+    }
+
+    // フォロー一覧を取得
+    const followingResult = await db
+      .select({
+        id: users.id,
+        username: users.username,
+        avatarUrl: users.avatarUrl,
+        bio: users.bio,
+        createdAt: follows.createdAt, // フォロー日時
+      })
+      .from(follows)
+      .innerJoin(users, eq(follows.followeeId, users.id))
+      .where(eq(follows.followerId, userId as number))
+      .orderBy(desc(follows.createdAt)); // 最新のフォローから順に
+
+    // 結果を整形
+    const followingList = followingResult.map((following) => ({
+      id: following.id as UserId,
+      username: following.username,
+      avatarUrl: following.avatarUrl,
+      bio: following.bio,
+    }));
+
+    try {
+      return UserListSchema.parse(followingList);
+    } catch (error) {
+      console.error('Failed to parse following list:', error);
+      throw new HTTPException(500, { message: 'フォロー中リスト形式のパースに失敗しました' });
+    }
+  } catch (error) {
+    if (error instanceof HTTPException) throw error;
+    console.error('Error getting following:', error);
+    throw new HTTPException(500, { message: 'フォロー中一覧の取得中にエラーが発生しました' });
+  }
+};
 
 /**
  * 指定されたタグをフォローします。
@@ -212,5 +373,60 @@ export const unfollowTag = async (followerId: UserId, tagId: TagId) => {
   }
 };
 
-// TODO: ユーザーがフォローしているタグ一覧を取得する関数
-// export const getFollowingTags = async (userId: UserId) => { ... }
+/**
+ * ユーザーがフォローしているタグ一覧を取得します
+ * @param userId 対象ユーザーのID
+ * @returns フォローしているタグ情報リスト
+ */
+export const getFollowingTags = async (userId: UserId) => {
+  try {
+    // ユーザーが存在するか確認
+    const userExists = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, userId as number))
+      .limit(1);
+    if (userExists.length === 0) {
+      throw new HTTPException(404, { message: '指定されたユーザーが見つかりません' });
+    }
+
+    // フォロー中のタグ一覧を取得
+    const followingTagsResult = await db
+      .select({
+        id: tags.id,
+        name: tags.name,
+        createdAt: tagFollows.createdAt, // フォロー日時
+      })
+      .from(tagFollows)
+      .innerJoin(tags, eq(tagFollows.tagId, tags.id))
+      .where(eq(tagFollows.followerId, userId as number))
+      .orderBy(desc(tagFollows.createdAt)); // 最新のフォローから順に
+
+    // 結果を整形
+    const followingTagsList = followingTagsResult.map((tag) => ({
+      id: tag.id as TagId,
+      name: tag.name,
+      createdAt: tag.createdAt,
+    }));
+
+    // タグリストの戻り値スキーマを使用
+    const TagListSchema = z.array(
+      z.object({
+        id: TagIdSchema,
+        name: z.string(),
+        createdAt: z.date(),
+      })
+    );
+
+    try {
+      return TagListSchema.parse(followingTagsList);
+    } catch (error) {
+      console.error('Failed to parse following tags list:', error);
+      throw new HTTPException(500, { message: 'フォロー中タグリスト形式のパースに失敗しました' });
+    }
+  } catch (error) {
+    if (error instanceof HTTPException) throw error;
+    console.error('Error getting following tags:', error);
+    throw new HTTPException(500, { message: 'フォロー中タグ一覧の取得中にエラーが発生しました' });
+  }
+};
