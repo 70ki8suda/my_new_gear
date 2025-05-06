@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { HTTPException } from 'hono/http-exception';
-import { loginSchema, signupSchema } from '../models/auth.model';
+import { loginSchema, signupSchema } from '../validators/auth.model';
 import { loginUser, signupUser } from '../services/auth.service';
 
 // 認証関連のルーターを作成

@@ -1,26 +1,14 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { authMiddleware } from '../middlewares/auth.middleware';
-import { z } from 'zod';
+import { zValidator } from '@hono/zod-validator';
 import {
   getUserNotifications,
   markNotificationAsRead,
   markAllNotificationsAsRead,
   getUnreadNotificationsCount,
 } from '../services/notification.service';
-import { zValidator } from '@hono/zod-validator';
-import { NotificationIdSchema } from '../types/branded.d';
-
-// --- クエリパラメータ検証スキーマ ---
-const notificationsQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(20),
-  offset: z.coerce.number().int().min(0).default(0),
-});
-
-// --- パラメータ検証スキーマ ---
-const notificationIdParamSchema = z.object({
-  notificationId: NotificationIdSchema,
-});
+import { notificationsQuerySchema, notificationIdParamSchema } from '../validators/notification.validator';
 
 const notificationRouter = new Hono();
 
@@ -52,21 +40,16 @@ notificationRouter.get('/unread/count', async (c) => {
 notificationRouter.get('/', zValidator('query', notificationsQuerySchema), async (c) => {
   try {
     const user = c.get('user');
-    const { limit, offset } = c.req.valid('query');
+    const query = c.req.valid('query');
 
-    const notifications = await getUserNotifications(user.id, limit, offset);
+    const readFilter = query.read ? query.read === 'true' : undefined;
 
-    return c.json({
-      notifications,
-      pagination: {
-        limit,
-        offset,
-      },
-    });
+    const notifications = await getUserNotifications(user.id, query.limit, query.offset, readFilter);
+    return c.json({ notifications });
   } catch (error) {
     if (error instanceof HTTPException) throw error;
-    console.error('通知一覧取得中にエラーが発生しました:', error);
-    throw new HTTPException(500, { message: 'サーバーエラーが発生しました' });
+    console.error('Error fetching notifications:', error);
+    throw new HTTPException(500, { message: '通知の取得中にエラーが発生しました' });
   }
 });
 
@@ -74,18 +57,16 @@ notificationRouter.get('/', zValidator('query', notificationsQuerySchema), async
  * 特定の通知を既読にする
  * PUT /api/notifications/:notificationId/read
  */
-notificationRouter.put('/:notificationId/read', zValidator('param', notificationIdParamSchema), async (c) => {
+notificationRouter.put('/:id/read', zValidator('param', notificationIdParamSchema), async (c) => {
   try {
     const user = c.get('user');
-    const { notificationId } = c.req.valid('param');
-
-    const result = await markNotificationAsRead(user.id, notificationId);
-
-    return c.json(result);
+    const { id: notificationId } = c.req.valid('param');
+    const notification = await markNotificationAsRead(user.id, notificationId);
+    return c.json({ message: '通知を既読にしました', notification });
   } catch (error) {
     if (error instanceof HTTPException) throw error;
-    console.error('通知既読処理中にエラーが発生しました:', error);
-    throw new HTTPException(500, { message: 'サーバーエラーが発生しました' });
+    console.error('Error marking notification as read:', error);
+    throw new HTTPException(500, { message: '通知の既読処理中にエラーが発生しました' });
   }
 });
 

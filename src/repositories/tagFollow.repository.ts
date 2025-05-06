@@ -77,5 +77,23 @@ export const tagFollowRepository = {
     // TODO: tagRepository に findTagsByIds を実装し、それを使うように修正する
   },
 
+  /**
+   * 指定されたユーザーがフォローしているタグのIDリストを取得します。
+   * @param userId 対象ユーザーID
+   * @param limit 取得件数
+   * @param offset 取得開始位置
+   * @returns フォローしている TagId の配列
+   */
+  async findFollowingTagIds(userId: UserId, limit: number = 50, offset: number = 0): Promise<TagId[]> {
+    const results = await db
+      .select({ tagId: tagFollows.tagId })
+      .from(tagFollows)
+      .where(eq(tagFollows.followerId, userId as number))
+      .orderBy(desc(tagFollows.createdAt))
+      .limit(limit)
+      .offset(offset);
+    return results.map((tf) => tf.tagId as TagId);
+  },
+
   // TODO: 特定のタグのフォロワー数をカウントするメソッドなど、必要に応じて追加
 };

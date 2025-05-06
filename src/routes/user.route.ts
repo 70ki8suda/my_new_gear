@@ -1,11 +1,8 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
-import { db } from '../db';
-import { users } from '../db/schema';
-import { eq } from 'drizzle-orm';
 import { authMiddleware } from '../middlewares/auth.middleware';
-import { z } from 'zod';
-import { UserIdSchema } from '../types/branded.d';
+import { zValidator } from '@hono/zod-validator';
+import { getUserProfile, updateUserProfile } from '../services/user.service';
 import {
   followUser,
   unfollowUser,
@@ -14,10 +11,8 @@ import {
   getFollowing,
   getFollowingTags,
 } from '../services/follow.service';
-import { zValidator } from '@hono/zod-validator';
-
-// --- パラメータ検証スキーマ ---
-const userIdParamSchema = z.object({ userId: UserIdSchema });
+import { userIdParamSchema, updateProfileSchema } from '../validators/user.validator';
+import { json } from 'stream/consumers';
 
 const userRouter = new Hono();
 
@@ -31,33 +26,11 @@ userRouter.use('/*', authMiddleware);
 userRouter.get('/me', async (c) => {
   try {
     const user = c.get('user');
-
-    // データベースから最新のユーザー情報を取得
-    const userData = await db.query.users.findFirst({
-      where: eq(users.id, user.id),
-      columns: {
-        id: true,
-        username: true,
-        email: true,
-        bio: true,
-        avatarUrl: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
-
-    if (!userData) {
-      throw new HTTPException(404, { message: 'ユーザーが見つかりませんでした' });
-    }
-
-    return c.json({
-      user: userData,
-    });
+    const userProfile = await getUserProfile(user.id);
+    return c.json({ user: userProfile });
   } catch (error) {
-    if (error instanceof HTTPException) {
-      throw error;
-    }
-    console.error('ユーザー情報取得中にエラーが発生しました:', error);
+    if (error instanceof HTTPException) throw error;
+    console.error('自分のプロフィール取得中にエラーが発生しました:', error);
     throw new HTTPException(500, { message: 'サーバーエラーが発生しました' });
   }
 });
@@ -66,62 +39,18 @@ userRouter.get('/me', async (c) => {
  * ユーザープロフィールの更新
  * PUT /api/users/me
  */
-userRouter.put(
-  '/me',
-  zValidator(
-    'json',
-    z.object({
-      bio: z.string().max(1000).optional(),
-      avatarUrl: z.string().url().optional(),
-    })
-  ),
-  async (c) => {
-    try {
-      const user = c.get('user');
-      const input = c.req.valid('json');
-
-      const updateData = {
-        ...(input.bio !== undefined && { bio: input.bio }),
-        ...(input.avatarUrl !== undefined && { avatarUrl: input.avatarUrl }),
-        updatedAt: new Date(),
-      };
-
-      if (Object.keys(updateData).length === 1) {
-        throw new HTTPException(400, { message: '更新するデータが指定されていません' });
-      }
-
-      const updatedUserArray = await db
-        .update(users)
-        .set(updateData)
-        .where(eq(users.id, user.id as number)) // DB操作なのでキャスト
-        .returning({
-          // 戻り値スキーマで検証したいフィールドを返す
-          id: users.id,
-          username: users.username,
-          email: users.email,
-          bio: users.bio,
-          avatarUrl: users.avatarUrl,
-          createdAt: users.createdAt,
-          updatedAt: users.updatedAt,
-        });
-
-      if (updatedUserArray.length === 0) {
-        throw new HTTPException(404, { message: 'ユーザーが見つかりませんでした' });
-      }
-      // TODO: 戻り値をZodで検証する (SafeUserSchema を共通化するか再定義)
-      // const safeUpdatedUser = SafeUserSchema.parse(updatedUserArray[0]);
-
-      return c.json({
-        message: 'プロフィールが更新されました',
-        user: updatedUserArray[0], // 仮：検証前のデータを返す
-      });
-    } catch (error) {
-      if (error instanceof HTTPException) throw error;
-      console.error('ユーザー情報更新中にエラーが発生しました:', error);
-      throw new HTTPException(500, { message: 'サーバーエラーが発生しました' });
-    }
+userRouter.put('/me', zValidator('json', updateProfileSchema), async (c) => {
+  try {
+    const user = c.get('user');
+    const input = c.req.valid('json');
+    const updatedUserProfile = await updateUserProfile(user.id, input);
+    return c.json({ message: 'プロフィールが更新されました', user: updatedUserProfile });
+  } catch (error) {
+    if (error instanceof HTTPException) throw error;
+    console.error('ユーザー情報更新中にエラーが発生しました:', error);
+    throw new HTTPException(500, { message: 'サーバーエラーが発生しました' });
   }
-);
+});
 
 // --- フォロー関連ルート ---
 

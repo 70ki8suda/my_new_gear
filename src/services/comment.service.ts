@@ -1,4 +1,4 @@
-import { type CreateCommentInput } from '../models/comment.model';
+import { type CreateCommentInput } from '../validators/comment.model';
 import { HTTPException } from 'hono/http-exception';
 import type { UserId, PostId, CommentId } from '../types/branded.d';
 import { z } from 'zod';

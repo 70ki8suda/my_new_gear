@@ -1,6 +1,6 @@
 import { db } from '../db';
 import { items, type NewItem } from '../db/schema';
-import { type CreateItemInput, type UpdateItemInput } from '../models/item.model';
+import { type CreateItemInput, type UpdateItemInput } from '../validators/item.model';
 import { HTTPException } from 'hono/http-exception';
 import { and, eq } from 'drizzle-orm';
 import type { UserId, ItemId, PhotoId } from '../types/branded.d';

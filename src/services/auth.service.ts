@@ -3,7 +3,7 @@ import jwt, { SignOptions } from 'jsonwebtoken';
 import { users, NewUser, User } from '../db/schema';
 import { config } from '../config/env';
 import { HTTPException } from 'hono/http-exception';
-import { LoginInput, SignupInput } from '../models/auth.model';
+import { LoginInput, SignupInput } from '../validators/auth.model';
 import { z } from 'zod';
 import { UserIdSchema } from '../types/branded.d';
 import { userRepository } from '../repositories/user.repository';

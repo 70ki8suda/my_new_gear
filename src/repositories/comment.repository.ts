@@ -1,6 +1,6 @@
 import { db } from '../db';
 import { comments, NewComment, Comment } from '../db/schema';
-import { eq, and, asc, desc } from 'drizzle-orm';
+import { eq, and, asc, desc, count } from 'drizzle-orm';
 import type { UserId, PostId, CommentId } from '../types/branded.d';
 
 export const commentRepository = {
@@ -66,5 +66,19 @@ export const commentRepository = {
       .returning({ id: comments.id });
 
     return result.length > 0;
+  },
+
+  /**
+   * 特定の投稿のコメント数をカウントします。
+   * @param postId 投稿ID
+   * @returns コメント数
+   */
+  async countCommentsByPostId(postId: PostId): Promise<number> {
+    const result = await db
+      .select({ value: count() }) // count() の結果を value として取得
+      .from(comments)
+      .where(eq(comments.postId, postId as number));
+    // 結果は [{ value: number }] の形になる
+    return result[0]?.value ?? 0;
   },
 };

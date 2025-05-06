@@ -1,6 +1,6 @@
 import { db } from '../db';
 import { tags, Tag, NewTag } from '../db/schema';
-import { eq, asc, inArray } from 'drizzle-orm';
+import { eq, asc, inArray, like } from 'drizzle-orm';
 import type { TagId } from '../types/branded.d';
 
 export const tagRepository = {
@@ -71,6 +71,18 @@ export const tagRepository = {
     const numericIds = ids as number[];
     // import { inArray } from 'drizzle-orm'; が必要
     return db.select().from(tags).where(inArray(tags.id, numericIds));
+  },
+
+  /**
+   * タグ名に基づいてタグを検索します。
+   * @param query 検索クエリ
+   * @param limit 取得上限数 (デフォルト 20)
+   * @returns タグオブジェクトの配列
+   */
+  async searchTagsByQuery(query: string, limit: number = 20): Promise<Tag[]> {
+    const searchTerm = `%${query}%`;
+    // Tag 型のスキーマに一致するようカラムを取得 (select() のみだと全カラム取得)
+    return db.select().from(tags).where(like(tags.name, searchTerm)).limit(limit);
   },
 
   // TODO: タグに関連するアイテム数を取得するメソッドなど、必要に応じて追加

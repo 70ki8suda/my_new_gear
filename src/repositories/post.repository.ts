@@ -1,7 +1,16 @@
 import { db } from '../db';
-import { posts, NewPost, Post } from '../db/schema';
-import { eq, desc, asc, and } from 'drizzle-orm';
-import type { ItemId, PostId, UserId } from '../types/branded.d';
+import { posts, NewPost, Post, users, items, likes, comments, postTags } from '../db/schema';
+import { eq, desc, asc, and, inArray, sql, or, like } from 'drizzle-orm';
+import type { ItemId, PostId, UserId, TagId } from '../types/branded.d';
+import type { User, Item } from '../db/schema';
+
+// findPostsForFeedByIds の戻り値の型を定義
+export type PostForFeed = Post & {
+  author: Pick<User, 'id' | 'username' | 'avatarUrl'> | null; // 著者情報 (一部)
+  item: Pick<Item, 'id' | 'name'> | null; // アイテム情報 (一部)
+  likesCount: number;
+  commentsCount: number;
+};
 
 export const postRepository = {
   /**
@@ -64,6 +73,101 @@ export const postRepository = {
       .where(and(eq(posts.id, postId), eq(posts.authorId, authorId))) // `and` を使うためにインポートが必要
       .returning({ id: posts.id });
     return result.length > 0;
+  },
+
+  /**
+   * 複数の投稿IDで投稿情報を一括取得します。
+   * @param ids 検索する投稿IDの配列
+   * @returns 投稿オブジェクトの配列
+   */
+  async findPostsByIds(ids: PostId[]): Promise<Post[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    // PostId[] を number[] にキャスト
+    const numericIds = ids as number[];
+    return db.select().from(posts).where(inArray(posts.id, numericIds));
+  },
+
+  /**
+   * 複数の投稿IDで、フィード表示に必要な情報（著者、アイテム、いいね数、コメント数）を含めて投稿を取得します。
+   * @param ids 検索する投稿IDの配列
+   * @returns PostForFeed オブジェクトの配列
+   */
+  async findPostsForFeedByIds(ids: PostId[]): Promise<PostForFeed[]> {
+    if (ids.length === 0) return [];
+    const numericIds = ids as number[];
+
+    const results = await db
+      .select({
+        // posts テーブルのカラムを明示的に指定
+        id: posts.id,
+        itemId: posts.itemId,
+        authorId: posts.authorId,
+        content: posts.content,
+        createdAt: posts.createdAt,
+        updatedAt: posts.updatedAt,
+        // author 情報を選択
+        author: {
+          id: users.id,
+          username: users.username,
+          avatarUrl: users.avatarUrl,
+        },
+        // item 情報を選択
+        item: {
+          id: items.id,
+          name: items.name,
+        },
+        // likesCount をサブクエリで取得
+        likesCount: sql<number>`(SELECT COUNT(*) FROM ${likes} WHERE ${likes.postId} = ${posts.id})`.mapWith(Number),
+        // commentsCount をサブクエリで取得
+        commentsCount: sql<number>`(SELECT COUNT(*) FROM ${comments} WHERE ${comments.postId} = ${posts.id})`.mapWith(
+          Number
+        ),
+      })
+      .from(posts)
+      .leftJoin(users, eq(posts.authorId, users.id))
+      .leftJoin(items, eq(posts.itemId, items.id))
+      .where(inArray(posts.id, numericIds));
+
+    // 型アサーションを追加
+    return results as PostForFeed[];
+  },
+
+  /**
+   * ポストのコンテンツに基づいてポストを検索します。
+   * @param query 検索クエリ
+   * @param limit 取得上限数 (デフォルト 20)
+   * @returns ポストオブジェクトの配列
+   */
+  async searchPostsByQuery(query: string, limit: number = 20): Promise<Post[]> {
+    const searchTerm = `%${query}%`;
+    // Post 型のスキーマに一致するようカラムを取得 (select() のみだと JOIN しない限り全カラム取得)
+    return db.select().from(posts).where(like(posts.content, searchTerm)).orderBy(desc(posts.createdAt)).limit(limit);
+  },
+
+  /**
+   * 指定されたタグ ID に紐づくポストを検索します。
+   * @param tagId タグID
+   * @param limit 取得上限数 (デフォルト 20)
+   * @returns ポストオブジェクトの配列
+   */
+  async searchPostsByTagId(tagId: TagId, limit: number = 20): Promise<Post[]> {
+    // Post 型に必要なカラムを明示的に指定
+    return db
+      .select({
+        id: posts.id,
+        itemId: posts.itemId,
+        authorId: posts.authorId,
+        content: posts.content,
+        createdAt: posts.createdAt,
+        updatedAt: posts.updatedAt,
+      })
+      .from(posts)
+      .innerJoin(postTags, eq(posts.id, postTags.postId))
+      .where(eq(postTags.tagId, tagId as number)) // TagId を number にキャスト
+      .orderBy(desc(posts.createdAt))
+      .limit(limit);
   },
 
   // TODO: Update post?

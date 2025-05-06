@@ -2,14 +2,9 @@ import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { HTTPException } from 'hono/http-exception';
 import { authMiddleware } from '../middlewares/auth.middleware';
-import { createItemSchema, updateItemSchema } from '../models/item.model';
+import { createItemSchema, updateItemSchema, itemIdParamSchema } from '../validators/item.model';
 import { createItem, getUserItems, getItemById, updateItem, deleteItem } from '../services/item.service';
-import { z } from 'zod';
 import { ItemIdSchema } from '../types/branded.d';
-
-// --- パラメータ検証スキーマ (コントローラーファイル内に定義) ---
-const itemIdParamSchema = z.object({ itemId: ItemIdSchema });
-// --- ここまで ---
 
 const itemRouter = new Hono();
 

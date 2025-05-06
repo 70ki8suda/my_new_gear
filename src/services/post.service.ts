@@ -1,4 +1,4 @@
-import { type CreatePostInput } from '../models/post.model';
+import { type CreatePostInput } from '../validators/post.model';
 import { HTTPException } from 'hono/http-exception';
 import type { UserId, ItemId, PostId } from '../types/branded.d';
 import { z } from 'zod';

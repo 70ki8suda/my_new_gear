@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PhotoIdSchema } from '../types/branded.d';
+import { PhotoIdSchema, ItemIdSchema } from '../types/branded.d';
 
 // アイテム作成用スキーマ
 export const createItemSchema = z.object({
@@ -25,3 +25,6 @@ export const updateItemSchema = z.object({
 });
 
 export type UpdateItemInput = z.infer<typeof updateItemSchema>;
+
+// アイテムIDパラメータ用スキーマ
+export const itemIdParamSchema = z.object({ itemId: ItemIdSchema });

@@ -100,6 +100,24 @@ export const followRepository = {
   },
 
   /**
+   * 指定されたユーザーがフォローしているユーザーのIDリストを取得します。
+   * @param userId 対象ユーザーID
+   * @param limit 取得件数
+   * @param offset 取得開始位置
+   * @returns フォローしている UserId の配列
+   */
+  async findFollowingIds(userId: UserId, limit: number = 50, offset: number = 0): Promise<UserId[]> {
+    const results = await db
+      .select({ followeeId: follows.followeeId })
+      .from(follows)
+      .where(eq(follows.followerId, userId as number))
+      .orderBy(desc(follows.createdAt))
+      .limit(limit)
+      .offset(offset);
+    return results.map((f) => f.followeeId as UserId);
+  },
+
+  /**
    * 指定されたユーザーがフォローしているユーザーの User オブジェクト一覧を取得します。
    * @param userId 対象ユーザーID
    * @param limit 取得件数
