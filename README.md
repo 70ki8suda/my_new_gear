@@ -514,3 +514,70 @@ describe('User Item Flow', () => {
   });
 });
 ```
+
+### 11.4 単体テスト実装のヒント
+
+Vitest を用いた単体テスト、特にサービス層の実装において、以下の点に留意すると開発がスムーズに進む可能性があります。
+
+#### 1. リポジトリパターンの活用
+
+- **背景:** Drizzle ORM のような流暢なインターフェースを持つライブラリを直接 `vi.mock` で模倣するのは、メソッドチェーンや型推論の問題により困難な場合があります（例: `TypeError: Cannot read properties of undefined (reading 'from')`）。
+- **推奨:** データベースアクセスロジックをサービス層から分離し、リポジトリ層（例: `src/repositories/user.repository.ts`）を作成します。サービス層はリポジトリ層のメソッドを呼び出すようにします。
+- **利点:**
+  - サービス層の **単体テスト** では、対応するリポジトリをモックします (`vi.mock('../repositories/...')`)。
+  - 関心事が分離され、コードの見通しが良くなります。
+- **テスト戦略:**
+  - サービス層の **単体テスト** では、対応するリポジトリをモックします (`vi.mock('../repositories/...')`)。
+  - リポジトリ層のテストは、別途 **統合テスト** (`tests/integration/`) などで実際のテストデータベースに接続して行うことを推奨します。
+
+#### 2. Vitest モック (`vi.mock`) の注意点
+
+- **巻き上げ (Hoisting):** `vi.mock` はファイルの先頭に巻き上げられて実行されます。そのため、`vi.mock` のファクトリ関数内で、それより後で定義されるはずの変数を参照しようとすると `ReferenceError: Cannot access '...' before initialization` が発生します。
+- **推奨されるモック定義方法:**
+
+  1.  **全てのモック定義は `vi.mock` のファクトリ関数内で行う:** トップレベルでモック用の変数を定義し、それをファクトリ関数で参照する方法は、巻き上げの問題を引き起こす可能性があるため推奨しません。内部モジュール・外部ライブラリに関わらず、ファクトリ関数内で `vi.fn()` を持つオブジェクトを直接定義・返却します。
+
+      ```typescript
+      // NG例 (ReferenceError の可能性あり)
+      // const mockSomething = { func: vi.fn() };
+      // vi.mock('./something', () => ({ something: mockSomething }));
+
+      // OK例
+      vi.mock('./something', () => ({
+        something: {
+          func: vi.fn(),
+        },
+      }));
+      ```
+
+  2.  **テストケース内でのモックへのアクセス:** テストケース (`it(...)` 内など) でモック関数自体にアクセスして振る舞いを設定 (`mockResolvedValue` など) したり、呼び出しを検証 (`toHaveBeenCalledWith` など) したりする必要がある場合は、`await import(...)` と `vi.mocked()` を使用します。
+
+      ```typescript
+      // モック設定
+      const { something } = vi.mocked(await import('./something'));
+      something.func.mockResolvedValue('mocked value');
+
+      // 呼び出し
+      await functionThatUsesSomething();
+
+      // 検証
+      expect(something.func).toHaveBeenCalled();
+      ```
+
+- **TypeScript の型推論の問題:** `vi.mocked(await import(...))` を使用しても、ネストされた関数などの型が `Mock` として正しく推論されず、`Property 'mockResolvedValue' does not exist on type ...` や `Argument of type '...' is not assignable to parameter of type 'void'.` のような型エラーが発生することがあります。
+  - **回避策 1 (推奨):** オブジェクト内の個々の関数にアクセスする際に、都度 `vi.mocked()` でラップします。
+    ```typescript
+    const module = await import('./some-module');
+    // NG: module.object.method が Mock として認識されない可能性
+    // vi.mocked(module).object.method.mockReturnValue(...);
+    // OK: 個別にラップ
+    vi.mocked(module.object.method).mockReturnValue(...);
+    expect(vi.mocked(module.object.method)).toHaveBeenCalled();
+    ```
+  - **回避策 2 (一時的):** 型エラーが発生する箇所に `@ts-expect-error` コメントを追加して、一時的にエラーを抑制します。根本的な解決ではありませんが、テストを進める上で有効な場合があります。
+    ```typescript
+    // @ts-expect-error 型推論の問題を一時的に無視
+    mockedFunction.mockResolvedValue('some value');
+    ```
+
+これらの点に注意することで、Vitest を用いた単体テストの開発体験が向上することを期待します。

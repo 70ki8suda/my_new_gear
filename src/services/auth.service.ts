@@ -1,13 +1,12 @@
 import bcrypt from 'bcryptjs';
 import jwt, { SignOptions } from 'jsonwebtoken';
-import { db } from '../db';
-import { users, NewUser } from '../db/schema';
+import { users, NewUser, User } from '../db/schema';
 import { config } from '../config/env';
-import { eq } from 'drizzle-orm';
 import { HTTPException } from 'hono/http-exception';
 import { LoginInput, SignupInput } from '../models/auth.model';
 import { z } from 'zod';
 import { UserIdSchema } from '../types/branded.d';
+import { userRepository } from '../repositories/user.repository';
 
 // signupUser の戻り値スキーマ (パスワードハッシュを含まない)
 const SafeUserSchema = z.object({
@@ -26,13 +25,13 @@ const SafeUserSchema = z.object({
  * @returns 作成されたユーザー情報 (安全な形式)
  */
 export const signupUser = async (input: SignupInput) => {
-  const existingUserByEmail = await db.select().from(users).where(eq(users.email, input.email)).limit(1);
-  if (existingUserByEmail.length > 0) {
+  const existingUserByEmail = await userRepository.findUserByEmail(input.email);
+  if (existingUserByEmail) {
     throw new HTTPException(409, { message: 'このメールアドレスは既に使用されています' });
   }
 
-  const existingUserByUsername = await db.select().from(users).where(eq(users.username, input.username)).limit(1);
-  if (existingUserByUsername.length > 0) {
+  const existingUserByUsername = await userRepository.findUserByUsername(input.username);
+  if (existingUserByUsername) {
     throw new HTTPException(409, { message: 'このユーザー名は既に使用されています' });
   }
 
@@ -44,8 +43,7 @@ export const signupUser = async (input: SignupInput) => {
     passwordHash: hashedPassword,
   };
 
-  const createdUserArray = await db.insert(users).values(newUser).returning();
-  const createdUser = createdUserArray[0];
+  const createdUser = await userRepository.createUser(newUser);
 
   // 戻り値オブジェクトを作成 (パスワードハッシュを除外)
   const safeUserObject = {
@@ -73,25 +71,22 @@ export const signupUser = async (input: SignupInput) => {
  * @returns JWTトークン (文字列)
  */
 export const loginUser = async (input: LoginInput) => {
-  const user = await db.select().from(users).where(eq(users.email, input.email)).limit(1);
-  if (user.length === 0) {
+  const user = await userRepository.findUserByEmail(input.email);
+  if (!user) {
     throw new HTTPException(401, { message: 'メールアドレスまたはパスワードが正しくありません' });
   }
 
-  const isValidPassword = await bcrypt.compare(input.password, user[0].passwordHash);
+  const isValidPassword = await bcrypt.compare(input.password, user.passwordHash);
   if (!isValidPassword) {
     throw new HTTPException(401, { message: 'メールアドレスまたはパスワードが正しくありません' });
   }
 
-  const payload = { userId: user[0].id, username: user[0].username };
+  const payload = { userId: user.id, username: user.username };
   const secret = config.JWT_SECRET;
-  let expiresInValue: string | number = config.JWT_EXPIRES_IN;
-  if (typeof expiresInValue === 'string' && /\d+d$/.test(expiresInValue)) {
-    expiresInValue = parseInt(expiresInValue) * 24 * 60 * 60; // 日数を秒数に
-  } else if (typeof expiresInValue === 'string') {
-    expiresInValue = parseInt(expiresInValue) || 3600; // デフォルト1時間など
-  }
+  const expiresInValue = config.JWT_EXPIRES_IN;
 
+  // const options: SignOptions = { expiresIn: expiresInValue as (string | number) }; // 型アサーションでも解決しない
+  // @ts-expect-error expiresInValue の型が広すぎるため一時的に無視
   const options: SignOptions = { expiresIn: expiresInValue };
   const token = jwt.sign(payload, secret, options);
 
