@@ -1,10 +1,8 @@
-import { db } from '../db';
-import { tags } from '../db/schema';
 import { HTTPException } from 'hono/http-exception';
-import { eq } from 'drizzle-orm';
 import type { TagId } from '../types/branded.d';
 import { z } from 'zod';
 import { TagIdSchema } from '../types/branded.d';
+import { tagRepository } from '../repositories/tag.repository';
 
 // タグ情報のZodスキーマ
 const TagSchema = z.object({
@@ -22,15 +20,13 @@ const TagsListSchema = z.array(TagSchema);
  */
 export const getAllTags = async () => {
   try {
-    const allTags = await db.query.tags.findMany({
-      orderBy: (tags, { asc }) => [asc(tags.name)],
-    });
+    const allTags = await tagRepository.findAllTags();
 
-    // 配列全体をまとめてパースする
+    // リポジトリから取得したデータが Tag[] 型であることを想定
+    // 必要に応じて TagId へのキャストを行う
     const safeTagsList = allTags.map((tag) => ({
-      id: tag.id as TagId,
-      name: tag.name,
-      createdAt: tag.createdAt,
+      ...tag,
+      id: tag.id as TagId, // TagId として明示的にキャスト
     }));
 
     try {
@@ -52,18 +48,16 @@ export const getAllTags = async () => {
  */
 export const getTagById = async (tagId: TagId) => {
   try {
-    const tag = await db.query.tags.findFirst({
-      where: eq(tags.id, tagId as number),
-    });
+    const tag = await tagRepository.findTagById(tagId);
 
     if (!tag) {
       throw new HTTPException(404, { message: '指定されたタグが見つかりません' });
     }
 
+    // リポジトリから取得したデータが Tag 型であることを想定
     const safeTag = {
-      id: tag.id as TagId,
-      name: tag.name,
-      createdAt: tag.createdAt,
+      ...tag,
+      id: tag.id as TagId, // TagId として明示的にキャスト
     };
 
     try {
@@ -75,7 +69,7 @@ export const getTagById = async (tagId: TagId) => {
   } catch (error) {
     if (error instanceof HTTPException) throw error;
     console.error('Error fetching tag:', error);
-    throw new HTTPException(500, { message: 'タグの取得中にエラーが発生しました' });
+    throw new HTTPException(500, { message: 'タグの取得中に予期せぬエラーが発生しました' });
   }
 };
 

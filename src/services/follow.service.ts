@@ -5,6 +5,11 @@ import { and, eq, count, desc } from 'drizzle-orm';
 import type { UserId, TagId } from '../types/branded.d';
 import { z } from 'zod';
 import { UserIdSchema, TagIdSchema } from '../types/branded.d';
+import { followRepository } from '../repositories/follow.repository';
+import { tagFollowRepository } from '../repositories/tagFollow.repository';
+import { userRepository } from '../repositories/user.repository';
+import { tagRepository } from '../repositories/tag.repository';
+import type { Tag } from '../db/schema';
 
 // フォロー/アンフォロー結果のスキーマ
 const FollowActionResultSchema = z.object({
@@ -31,6 +36,15 @@ const UserInfoSchema = z.object({
 // ユーザーリストの戻り値スキーマ
 const UserListSchema = z.array(UserInfoSchema);
 
+// タグ情報のスキーマ (ここに移動)
+const TagInfoSchema = z.object({
+  id: TagIdSchema,
+  name: z.string(),
+});
+
+// フォロー中タグリストの戻り値スキーマ
+const FollowingTagsSchema = z.array(TagInfoSchema);
+
 /**
  * 指定されたユーザーをフォローします。
  * @param followerId フォローするユーザーのID
@@ -38,32 +52,19 @@ const UserListSchema = z.array(UserInfoSchema);
  * @returns フォロー操作の結果
  */
 export const followUser = async (followerId: UserId, followeeId: UserId) => {
-  // 自分自身をフォローしようとしていないかチェック
   if (followerId === followeeId) {
     throw new HTTPException(400, { message: '自分自身をフォローすることはできません' });
   }
 
-  // フォローされるユーザーが存在するか確認
-  const followeeExists = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.id, followeeId as number))
-    .limit(1);
-  if (followeeExists.length === 0) {
+  const followeeExists = await userRepository.findUserById(followeeId);
+  if (!followeeExists) {
     throw new HTTPException(404, { message: 'フォロー対象のユーザーが見つかりません' });
   }
 
-  // 既にフォローしているか確認
-  const existingFollow = await db
-    .select()
-    .from(follows)
-    .where(and(eq(follows.followerId, followerId as number), eq(follows.followeeId, followeeId as number)))
-    .limit(1);
-
-  if (existingFollow.length > 0) {
+  const existingFollow = await followRepository.findFollow(followerId, followeeId);
+  if (existingFollow) {
     const resultObject = { success: true, message: '既にフォローしています' };
     try {
-      // omit 不要、スキーマに message は optional で含まれる
       return FollowActionResultSchema.parse(resultObject);
     } catch (error) {
       console.error('Failed to parse existing follow result:', error);
@@ -71,23 +72,19 @@ export const followUser = async (followerId: UserId, followeeId: UserId) => {
     }
   }
 
-  // フォロー関係を作成
-  const newFollow: NewFollow = {
-    followerId: followerId as number,
-    followeeId: followeeId as number,
-    createdAt: new Date(),
+  const newFollowData = {
+    followerId: followerId,
+    followeeId: followeeId,
   };
 
   try {
-    await db.insert(follows).values(newFollow);
+    await followRepository.createFollow(newFollowData);
   } catch (error) {
-    // ユニークキー制約違反など、DBエラーの可能性
     console.error('Error creating follow relationship:', error);
-    // すでに存在するケースは上でハンドルしているので、ここでは一般的なエラーとする
     throw new HTTPException(500, { message: 'フォロー処理中にエラーが発生しました' });
   }
 
-  const resultObject = { success: true }; // message なしで返す
+  const resultObject = { success: true };
   try {
     return FollowActionResultSchema.parse(resultObject);
   } catch (error) {
@@ -103,29 +100,13 @@ export const followUser = async (followerId: UserId, followeeId: UserId) => {
  * @returns フォロー解除操作の結果
  */
 export const unfollowUser = async (followerId: UserId, followeeId: UserId) => {
-  // 自分自身のフォロー解除は意味がないのでチェック
   if (followerId === followeeId) {
     throw new HTTPException(400, { message: '自分自身のフォローは解除できません' });
   }
 
-  // フォロー関係が存在するか確認 (存在しなければ何もしないか、エラーを返すか)
-  const deleteResult = await db
-    .delete(follows)
-    .where(and(eq(follows.followerId, followerId as number), eq(follows.followeeId, followeeId as number)))
-    .returning({ deletedId: follows.followerId }); // 削除されたか確認するために何か返す
+  const deleted = await followRepository.deleteFollow(followerId, followeeId);
 
-  if (deleteResult.length === 0) {
-    const resultObject = { success: true, message: 'フォローされていません' };
-    try {
-      // omit 不要
-      return FollowActionResultSchema.parse(resultObject);
-    } catch (error) {
-      console.error('Failed to parse not following result:', error);
-      throw new HTTPException(500, { message: 'フォロー解除状況確認後のデータ形式エラー' });
-    }
-  }
-
-  const resultObject = { success: true }; // message なしで返す
+  const resultObject = { success: true };
   try {
     return FollowActionResultSchema.parse(resultObject);
   } catch (error) {
@@ -141,31 +122,17 @@ export const unfollowUser = async (followerId: UserId, followeeId: UserId) => {
  */
 export const getUserFollowCounts = async (userId: UserId) => {
   try {
-    // ユーザーが存在するか確認
-    const userExists = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.id, userId as number))
-      .limit(1);
-    if (userExists.length === 0) {
+    const userExists = await userRepository.findUserById(userId);
+    if (!userExists) {
       throw new HTTPException(404, { message: '指定されたユーザーが見つかりません' });
     }
 
-    // フォロワー数を取得
-    const followersCountResult = await db
-      .select({ count: count() })
-      .from(follows)
-      .where(eq(follows.followeeId, userId as number));
-
-    // フォロー数を取得
-    const followingCountResult = await db
-      .select({ count: count() })
-      .from(follows)
-      .where(eq(follows.followerId, userId as number));
+    const followersCount = await followRepository.countFollowers(userId);
+    const followingCount = await followRepository.countFollowing(userId);
 
     const countObject = {
-      followersCount: followersCountResult[0].count,
-      followingCount: followingCountResult[0].count,
+      followersCount: followersCount,
+      followingCount: followingCount,
     };
 
     try {
@@ -186,38 +153,20 @@ export const getUserFollowCounts = async (userId: UserId) => {
  * @param userId 対象ユーザーのID
  * @returns フォロワーのユーザー情報リスト
  */
-export const getFollowers = async (userId: UserId) => {
+export const getFollowers = async (userId: UserId, limit: number = 50, offset: number = 0) => {
   try {
-    // ユーザーが存在するか確認
-    const userExists = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.id, userId as number))
-      .limit(1);
-    if (userExists.length === 0) {
+    const userExists = await userRepository.findUserById(userId);
+    if (!userExists) {
       throw new HTTPException(404, { message: '指定されたユーザーが見つかりません' });
     }
 
-    // フォロワー一覧を取得
-    const followersResult = await db
-      .select({
-        id: users.id,
-        username: users.username,
-        avatarUrl: users.avatarUrl,
-        bio: users.bio,
-        createdAt: follows.createdAt, // フォロー日時
-      })
-      .from(follows)
-      .innerJoin(users, eq(follows.followerId, users.id))
-      .where(eq(follows.followeeId, userId as number))
-      .orderBy(desc(follows.createdAt)); // 最新のフォロワーから順に
+    const followersData = await followRepository.findFollowers(userId, limit, offset);
 
-    // 結果を整形
-    const followersList = followersResult.map((follower) => ({
-      id: follower.id as UserId,
-      username: follower.username,
-      avatarUrl: follower.avatarUrl,
-      bio: follower.bio,
+    const followersList = followersData.map((user) => ({
+      id: user.id as UserId,
+      username: user.username,
+      avatarUrl: user.avatarUrl,
+      bio: user.bio,
     }));
 
     try {
@@ -238,38 +187,20 @@ export const getFollowers = async (userId: UserId) => {
  * @param userId 対象ユーザーのID
  * @returns フォローしているユーザー情報リスト
  */
-export const getFollowing = async (userId: UserId) => {
+export const getFollowing = async (userId: UserId, limit: number = 50, offset: number = 0) => {
   try {
-    // ユーザーが存在するか確認
-    const userExists = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.id, userId as number))
-      .limit(1);
-    if (userExists.length === 0) {
+    const userExists = await userRepository.findUserById(userId);
+    if (!userExists) {
       throw new HTTPException(404, { message: '指定されたユーザーが見つかりません' });
     }
 
-    // フォロー一覧を取得
-    const followingResult = await db
-      .select({
-        id: users.id,
-        username: users.username,
-        avatarUrl: users.avatarUrl,
-        bio: users.bio,
-        createdAt: follows.createdAt, // フォロー日時
-      })
-      .from(follows)
-      .innerJoin(users, eq(follows.followeeId, users.id))
-      .where(eq(follows.followerId, userId as number))
-      .orderBy(desc(follows.createdAt)); // 最新のフォローから順に
+    const followingData = await followRepository.findFollowing(userId, limit, offset);
 
-    // 結果を整形
-    const followingList = followingResult.map((following) => ({
-      id: following.id as UserId,
-      username: following.username,
-      avatarUrl: following.avatarUrl,
-      bio: following.bio,
+    const followingList = followingData.map((user) => ({
+      id: user.id as UserId,
+      username: user.username,
+      avatarUrl: user.avatarUrl,
+      bio: user.bio,
     }));
 
     try {
@@ -293,24 +224,36 @@ export const getFollowing = async (userId: UserId) => {
  */
 export const followTag = async (followerId: UserId, tagId: TagId) => {
   // タグが存在するか確認
-  const tagExists = await db
-    .select({ id: tags.id })
-    .from(tags)
-    .where(eq(tags.id, tagId as number))
-    .limit(1);
-  if (tagExists.length === 0) {
+  // const tagExists = await db
+  //   .select({ id: tags.id })
+  //   .from(tags)
+  //   .where(eq(tags.id, tagId as number))
+  //   .limit(1);
+  // if (tagExists.length === 0) {
+  //   throw new HTTPException(404, { message: 'フォロー対象のタグが見つかりません' });
+  // }
+  const tagExists = await tagRepository.findTagById(tagId);
+  if (!tagExists) {
     throw new HTTPException(404, { message: 'フォロー対象のタグが見つかりません' });
   }
 
   // 既にフォローしているか確認
-  const existingFollow = await db
-    .select()
-    .from(tagFollows)
-    .where(and(eq(tagFollows.followerId, followerId as number), eq(tagFollows.tagId, tagId as number)))
-    .limit(1);
-
-  if (existingFollow.length > 0) {
-    const resultObject = { success: true, message: '既にこのタグをフォローしています' };
+  // const existingFollow = await db
+  //   .select()
+  //   .from(tagFollows)
+  //   .where(and(eq(tagFollows.followerId, followerId as number), eq(tagFollows.tagId, tagId as number)))
+  //   .limit(1);
+  // if (existingFollow.length > 0) {
+  //   const resultObject = { success: true, message: '既にこのタグをフォローしています' };
+  //   try {
+  //     return FollowActionResultSchema.parse(resultObject);
+  //   } catch (error) {
+  //     console.error('Failed to parse existing tag follow result:', error);
+  //     throw new HTTPException(500, { message: 'タグフォロー状況確認後のデータ形式エラー' });
+  //   }
+  const existingFollow = await tagFollowRepository.findTagFollow(followerId, tagId);
+  if (existingFollow) {
+    const resultObject = { success: true, message: '既にフォローしています' };
     try {
       return FollowActionResultSchema.parse(resultObject);
     } catch (error) {
@@ -320,18 +263,25 @@ export const followTag = async (followerId: UserId, tagId: TagId) => {
   }
 
   // フォロー関係を作成
-  const newTagFollow: NewTagFollow = {
-    followerId: followerId as number,
-    tagId: tagId as number,
-    createdAt: new Date(),
+  // const newTagFollow: NewTagFollow = {
+  //   followerId: followerId as number,
+  //   tagId: tagId as number,
+  //   createdAt: new Date(),
+  // };
+  const newTagFollowData = {
+    followerId: followerId,
+    tagId: tagId,
+    // createdAt は DB デフォルトかリポジトリで設定
   };
-
   try {
-    await db.insert(tagFollows).values(newTagFollow);
+    // await db.insert(tagFollows).values(newTagFollow);
+    await tagFollowRepository.createTagFollow(newTagFollowData);
   } catch (error) {
     console.error('Error creating tag follow relationship:', error);
     throw new HTTPException(500, { message: 'タグフォロー処理中にエラーが発生しました' });
   }
+
+  // TODO: タグフォロー通知？ (仕様による)
 
   const resultObject = { success: true };
   try {
@@ -349,20 +299,27 @@ export const followTag = async (followerId: UserId, tagId: TagId) => {
  * @returns フォロー解除操作の結果
  */
 export const unfollowTag = async (followerId: UserId, tagId: TagId) => {
-  const deleteResult = await db
-    .delete(tagFollows)
-    .where(and(eq(tagFollows.followerId, followerId as number), eq(tagFollows.tagId, tagId as number)))
-    .returning({ deletedId: tagFollows.followerId });
+  // タグが存在するか一応確認 (必須ではないかも)
+  // const tagExists = await tagRepository.findTagById(tagId);
+  // if (!tagExists) {
+  //   throw new HTTPException(404, { message: 'フォロー解除対象のタグが見つかりません' });
+  // }
 
-  if (deleteResult.length === 0) {
-    const resultObject = { success: true, message: 'このタグはフォローされていません' };
-    try {
-      return FollowActionResultSchema.parse(resultObject);
-    } catch (error) {
-      console.error('Failed to parse not following tag result:', error);
-      throw new HTTPException(500, { message: 'タグフォロー解除状況確認後のデータ形式エラー' });
-    }
-  }
+  // フォロー関係を削除 (存在しなくてもエラーにしない)
+  // const deleteResult = await db
+  //   .delete(tagFollows)
+  //   .where(and(eq(tagFollows.followerId, followerId as number), eq(tagFollows.tagId, tagId as number)))
+  //   .returning({ deletedId: tagFollows.followerId });
+  // if (deleteResult.length === 0) {
+  //   const resultObject = { success: true, message: 'このタグはフォローされていません' };
+  //   try {
+  //     return FollowActionResultSchema.parse(resultObject);
+  //   } catch (error) {
+  //     console.error('Failed to parse not following tag result:', error);
+  //     throw new HTTPException(500, { message: 'タグフォロー解除状況確認後のデータ形式エラー' });
+  //   }
+  // }
+  await tagFollowRepository.deleteTagFollow(followerId, tagId);
 
   const resultObject = { success: true };
   try {
@@ -374,59 +331,73 @@ export const unfollowTag = async (followerId: UserId, tagId: TagId) => {
 };
 
 /**
- * ユーザーがフォローしているタグ一覧を取得します
+ * 指定されたユーザーがフォローしているタグ一覧を取得します
  * @param userId 対象ユーザーのID
- * @returns フォローしているタグ情報リスト
+ * @param limit 取得件数
+ * @param offset 取得開始位置
+ * @returns フォローしているタグの情報リスト
  */
-export const getFollowingTags = async (userId: UserId) => {
+export const getFollowingTags = async (userId: UserId, limit: number = 50, offset: number = 0) => {
+  // ユーザーが存在するか確認
+  // const userExists = await db
+  //   .select({ id: users.id })
+  //   .from(users)
+  //   .where(eq(users.id, userId as number))
+  //   .limit(1);
+  // if (userExists.length === 0) {
+  //   throw new HTTPException(404, { message: '指定されたユーザーが見つかりません' });
+  // }
+  const userExists = await userRepository.findUserById(userId);
+  if (!userExists) {
+    throw new HTTPException(404, { message: '指定されたユーザーが見つかりません' });
+  }
+
+  // フォロー中のタグ一覧を取得
+  // const followingTagsResult = await db
+  //   .select({
+  //     id: tags.id,
+  //     name: tags.name,
+  //     createdAt: tagFollows.createdAt, // フォロー日時
+  //   })
+  //   .from(tagFollows)
+  //   .innerJoin(tags, eq(tagFollows.tagId, tags.id))
+  //   .where(eq(tagFollows.followerId, userId as number))
+  //   .orderBy(desc(tagFollows.createdAt)); // 最新のフォローから順に
+  // リポジトリからフォローしている Tag オブジェクトリストを取得
+  // 注意: tagFollowRepository.findFollowingTags は一時的に直接 DB を見ている状態
+  const followingTagsData = await tagFollowRepository.findFollowingTags(userId, limit, offset);
+
+  // 結果を整形
+  // const followingTagsList = followingTagsResult.map((tag) => ({
+  //   id: tag.id as TagId,
+  //   name: tag.name,
+  //   createdAt: tag.createdAt,
+  // }));
+  // Tag オブジェクトを TagInfoSchema に合わせて整形
+  const followingTagsList = followingTagsData.map((tag) => ({
+    id: tag.id as TagId,
+    name: tag.name,
+    // createdAt は TagInfoSchema には含めない
+  }));
+
+  // タグリストの戻り値スキーマを使用
+  // const TagListSchema = z.array(
+  //   z.object({
+  //     id: TagIdSchema,
+  //     name: z.string(),
+  //     createdAt: z.date(),
+  //   })
+  // );
+  // Note: FollowingTagsSchema はファイル上部で定義済みのはず
+
   try {
-    // ユーザーが存在するか確認
-    const userExists = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.id, userId as number))
-      .limit(1);
-    if (userExists.length === 0) {
-      throw new HTTPException(404, { message: '指定されたユーザーが見つかりません' });
-    }
-
-    // フォロー中のタグ一覧を取得
-    const followingTagsResult = await db
-      .select({
-        id: tags.id,
-        name: tags.name,
-        createdAt: tagFollows.createdAt, // フォロー日時
-      })
-      .from(tagFollows)
-      .innerJoin(tags, eq(tagFollows.tagId, tags.id))
-      .where(eq(tagFollows.followerId, userId as number))
-      .orderBy(desc(tagFollows.createdAt)); // 最新のフォローから順に
-
-    // 結果を整形
-    const followingTagsList = followingTagsResult.map((tag) => ({
-      id: tag.id as TagId,
-      name: tag.name,
-      createdAt: tag.createdAt,
-    }));
-
-    // タグリストの戻り値スキーマを使用
-    const TagListSchema = z.array(
-      z.object({
-        id: TagIdSchema,
-        name: z.string(),
-        createdAt: z.date(),
-      })
-    );
-
-    try {
-      return TagListSchema.parse(followingTagsList);
-    } catch (error) {
-      console.error('Failed to parse following tags list:', error);
-      throw new HTTPException(500, { message: 'フォロー中タグリスト形式のパースに失敗しました' });
-    }
+    // return TagListSchema.parse(followingTagsList);
+    // return FollowingTagsSchema.parse(followingTagsList);
+    // FollowingTagsSchema ではなく z.array(TagInfoSchema) でパース
+    // ここでの参照は OK になるはず
+    return z.array(TagInfoSchema).parse(followingTagsList);
   } catch (error) {
-    if (error instanceof HTTPException) throw error;
-    console.error('Error getting following tags:', error);
-    throw new HTTPException(500, { message: 'フォロー中タグ一覧の取得中にエラーが発生しました' });
+    console.error('Failed to parse following tags list:', error);
+    throw new HTTPException(500, { message: 'フォロー中タグリスト形式のパースに失敗しました' });
   }
 };

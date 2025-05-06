@@ -1,10 +1,9 @@
-import { db } from '../db';
-import { likes, posts, type NewLike } from '../db/schema';
 import { HTTPException } from 'hono/http-exception';
-import { and, eq, count } from 'drizzle-orm';
 import type { UserId, PostId } from '../types/branded.d';
 import { z } from 'zod';
 import { createLikeNotification } from './notification.service';
+import { likeRepository } from '../repositories/like.repository';
+import { postRepository } from '../repositories/post.repository';
 
 // like/unlike の戻り値スキーマ
 const LikeActionResultSchema = z.object({
@@ -21,30 +20,17 @@ const LikeActionResultSchema = z.object({
  */
 export const likePost = async (userId: UserId, postId: PostId) => {
   // 投稿が存在するか確認
-  const postData = await db
-    .select({ id: posts.id, authorId: posts.authorId })
-    .from(posts)
-    .where(eq(posts.id, postId as number))
-    .limit(1);
-  if (postData.length === 0) {
+  const post = await postRepository.findPostById(postId);
+  if (!post) {
     throw new HTTPException(404, { message: '投稿が見つかりませんでした' });
   }
 
-  const post = postData[0];
-
   // 既にいいねしているか確認
-  const existingLike = await db
-    .select()
-    .from(likes)
-    .where(and(eq(likes.userId, userId as number), eq(likes.postId, postId as number)))
-    .limit(1);
-  if (existingLike.length > 0) {
+  const existingLike = await likeRepository.findLike(userId, postId);
+  if (existingLike) {
     // 既にいいね済みの場合、そのままいいね数を返す
-    const likesCountResult = await db
-      .select({ count: count() })
-      .from(likes)
-      .where(eq(likes.postId, postId as number));
-    const resultObject = { success: true, likesCount: likesCountResult[0].count, message: '既にいいねしています' };
+    const likesCount = await likeRepository.countLikesByPostId(postId);
+    const resultObject = { success: true, likesCount: likesCount, message: '既にいいねしています' };
     try {
       return LikeActionResultSchema.parse(resultObject);
     } catch (error) {
@@ -54,27 +40,29 @@ export const likePost = async (userId: UserId, postId: PostId) => {
   }
 
   // いいねをデータベースに挿入
-  const newLike: NewLike = {
-    userId: userId as number,
-    postId: postId as number,
-    createdAt: new Date(),
+  const newLikeData = {
+    userId: userId,
+    postId: postId,
+    // createdAt はリポジトリ層またはDBデフォルトで設定される想定
   };
-  await db.insert(likes).values(newLike);
+  await likeRepository.createLike(newLikeData);
 
   // 通知を作成（非同期で実行し、エラーが発生しても処理を続行）
-  try {
-    await createLikeNotification(post.authorId as UserId, userId, postId);
-  } catch (error) {
-    // 通知作成のエラーはログに記録するだけで、いいね処理自体は成功とする
-    console.error('いいね通知作成中にエラーが発生しました:', error);
+  // 投稿者自身のいいねでは通知しない
+  if (post.authorId !== userId) {
+    try {
+      // post.authorId が UserId 型であることを確認 (必要ならキャスト)
+      const authorIdAsUserId = post.authorId as UserId;
+      await createLikeNotification(authorIdAsUserId, userId, postId);
+    } catch (error) {
+      // 通知作成のエラーはログに記録するだけで、いいね処理自体は成功とする
+      console.error('いいね通知作成中にエラーが発生しました:', error);
+    }
   }
 
   // 更新後のいいね数を取得して返す
-  const likesCountResult = await db
-    .select({ count: count() })
-    .from(likes)
-    .where(eq(likes.postId, postId as number));
-  const resultObject = { success: true, likesCount: likesCountResult[0].count };
+  const likesCount = await likeRepository.countLikesByPostId(postId);
+  const resultObject = { success: true, likesCount: likesCount };
   try {
     return LikeActionResultSchema.parse(resultObject);
   } catch (error) {
@@ -90,46 +78,19 @@ export const likePost = async (userId: UserId, postId: PostId) => {
  * @returns いいね解除操作の結果と現在のいいね数
  */
 export const unlikePost = async (userId: UserId, postId: PostId) => {
-  // 投稿が存在するか確認 (unlikeの場合は必須ではないかもしれないが念のため)
-  const postExists = await db
-    .select({ id: posts.id })
-    .from(posts)
-    .where(eq(posts.id, postId as number))
-    .limit(1);
-  if (postExists.length === 0) {
+  // 投稿が存在するか確認 (unlikeの場合、投稿がなくてもエラーではないかもしれないが、一貫性のためチェック)
+  const postExists = await postRepository.findPostById(postId);
+  if (!postExists) {
     throw new HTTPException(404, { message: '投稿が見つかりませんでした' });
   }
 
-  // いいねが存在するか確認
-  const existingLike = await db
-    .select()
-    .from(likes)
-    .where(and(eq(likes.userId, userId as number), eq(likes.postId, postId as number)))
-    .limit(1);
-  if (existingLike.length === 0) {
-    // いいねが存在しない場合、そのままいいね数を返す
-    const likesCountResult = await db
-      .select({ count: count() })
-      .from(likes)
-      .where(eq(likes.postId, postId as number));
-    const resultObject = { success: true, likesCount: likesCountResult[0].count, message: 'いいねされていません' };
-    try {
-      return LikeActionResultSchema.parse(resultObject);
-    } catch (error) {
-      console.error('Failed to parse unlike result:', error);
-      throw new HTTPException(500, { message: 'いいね解除後のデータ形式エラー' });
-    }
-  }
+  // いいねをデータベースから削除 (存在しなくてもエラーにはしない)
+  await likeRepository.deleteLike(userId, postId);
 
-  // いいねをデータベースから削除
-  await db.delete(likes).where(and(eq(likes.userId, userId as number), eq(likes.postId, postId as number)));
-
-  // 更新後のいいね数を取得して返す
-  const likesCountResult = await db
-    .select({ count: count() })
-    .from(likes)
-    .where(eq(likes.postId, postId as number));
-  const resultObject = { success: true, likesCount: likesCountResult[0].count };
+  // 更新後のいいね数を取得して返す (削除されたかどうかにかかわらず現在の数を返す)
+  const likesCount = await likeRepository.countLikesByPostId(postId);
+  // deleteLike が成功したかどうかのメッセージは含めず、単純に現在の数を返す
+  const resultObject = { success: true, likesCount: likesCount };
   try {
     return LikeActionResultSchema.parse(resultObject);
   } catch (error) {

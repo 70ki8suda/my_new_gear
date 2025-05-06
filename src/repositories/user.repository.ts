@@ -1,6 +1,7 @@
 import { db } from '../db';
 import { users, NewUser, User } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
+import { UserId } from '../types/branded.d';
 
 export const userRepository = {
   /**
@@ -36,5 +37,31 @@ export const userRepository = {
     }
     return result[0];
   },
-  // TODO: Add other user-related database operations if needed (e.g., findById, update, delete)
+
+  /**
+   * ユーザーIDでユーザーを検索します。
+   * @param id 検索するユーザーID
+   * @returns ユーザーオブジェクト、見つからない場合は null
+   */
+  async findUserById(id: UserId): Promise<User | null> {
+    const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
+    return result[0] ?? null;
+  },
+
+  /**
+   * 複数のユーザーIDでユーザー情報を一括取得します。
+   * @param ids 検索するユーザーIDの配列
+   * @returns ユーザーオブジェクトの配列
+   */
+  async findUsersByIds(ids: UserId[]): Promise<User[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    // UserId[] を number[] にキャスト (Drizzle が Branded Types を直接受け入れない場合)
+    const numericIds = ids as number[];
+    const result = await db.select().from(users).where(inArray(users.id, numericIds));
+    return result;
+  },
+
+  // TODO: Add other user-related database operations if needed (e.g., update, delete)
 };

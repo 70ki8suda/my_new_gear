@@ -1,80 +1,95 @@
-import { db } from '../db';
-import { items, posts, users, type NewPost } from '../db/schema';
 import { type CreatePostInput } from '../models/post.model';
 import { HTTPException } from 'hono/http-exception';
-import { and, eq, desc } from 'drizzle-orm';
 import type { UserId, ItemId, PostId } from '../types/branded.d';
 import { z } from 'zod';
 import { UserIdSchema, ItemIdSchema, PostIdSchema } from '../types/branded.d';
+import { postRepository } from '../repositories/post.repository';
+import { itemRepository } from '../repositories/item.repository';
+import { userRepository } from '../repositories/user.repository';
+import type { User, Item } from '../db/schema';
 
-// Author情報のZodスキーマ定義 (コメントサービスと重複するが、依存を避けるため再定義 or 共通化)
+// Author情報のZodスキーマ定義
 const AuthorInfoSchema = z
   .object({
     id: UserIdSchema,
     username: z.string(),
-    avatarUrl: z.string().nullable(),
+    avatarUrl: z.string().nullable().optional(),
   })
   .nullable();
 
-// createPost の戻り値スキーマ
+// Item簡易情報のZodスキーマ定義 (ここに移動)
+const ItemSummarySchema = z
+  .object({
+    id: ItemIdSchema,
+    name: z.string(),
+  })
+  .nullable();
+
+// createPost の戻り値スキーマ (author, item を削除)
 const CreatedPostSchema = z.object({
   id: PostIdSchema,
   itemId: ItemIdSchema,
   authorId: UserIdSchema,
   content: z.string(),
   createdAt: z.date(),
-  updatedAt: z.date().nullable(), // posts テーブルにも updatedAt はある想定
+  updatedAt: z.date().nullable(),
 });
 
-// getPostById, getItemPosts の戻り値スキーマ
-const PostDetailsSchema = CreatedPostSchema.extend({
-  author: AuthorInfoSchema,
-  item: z
-    .object({
-      // 簡易的な Item 情報
-      id: ItemIdSchema,
-      name: z.string(),
-    })
-    .nullable(),
+// getPostById, getItemPosts の戻り値スキーマ (独立定義 - こちらを残す)
+const PostDetailsSchema = z.object({
+  id: PostIdSchema,
+  itemId: ItemIdSchema,
+  authorId: UserIdSchema,
+  content: z.string(),
+  createdAt: z.date(),
+  updatedAt: z.date().nullable(),
+  author: AuthorInfoSchema, // ここでは必須
+  item: ItemSummarySchema, // ここでは必須
 });
+
+// TODO: Add updatePost (requires checking ownership)
+// TODO: Add deletePost (requires checking ownership)
+// TODO: Add photo handling to createPost/updatePost
 
 /**
  * 新しいポストを作成します
  * @param userId 投稿者のユーザーID
- * @param input ポスト作成情報
+ * @param input ポスト作成情報 (itemId を含む)
  * @returns 作成されたポスト
  */
 export const createPost = async (userId: UserId, input: CreatePostInput) => {
-  // 対応するアイテムが存在し、ユーザーが所有者か確認（仕様によっては不要かも）
-  const itemExists = await db
-    .select({ id: items.id })
-    .from(items)
-    .where(and(eq(items.id, input.itemId), eq(items.userId, userId as number)))
-    .limit(1);
-
-  if (itemExists.length === 0) {
-    throw new HTTPException(404, { message: '指定されたアイテムが見つからないか、投稿権限がありません' });
+  // 対応するアイテムが存在し、ユーザーが所有者か確認
+  const item = await itemRepository.findItemById(input.itemId);
+  if (!item) {
+    throw new HTTPException(404, { message: '指定されたアイテムが見つかりません' });
+  }
+  // アイテム所有者チェック (サービス層の責務)
+  if (item.userId !== userId) {
+    throw new HTTPException(403, { message: 'このアイテムへの投稿権限がありません' });
   }
 
-  const newPost: NewPost = {
-    authorId: userId as number,
-    itemId: input.itemId as number,
+  const newPostData = {
+    authorId: userId,
+    itemId: input.itemId,
     content: input.content,
-    createdAt: new Date(),
+    // createdAt, updatedAt はリポジトリ層またはDBデフォルトで設定される想定
   };
 
-  const result = await db.insert(posts).values(newPost).returning();
+  // postRepository を使用してポストを作成
+  const createdPost = await postRepository.createPost(newPostData);
+
+  // DBからの戻り値 (Post 型) を CreatedPostSchema に合わせて整形
   const postObject = {
-    // DBからの戻り値を整形
-    id: result[0].id,
-    itemId: result[0].itemId,
-    authorId: result[0].authorId,
-    content: result[0].content,
-    createdAt: result[0].createdAt,
-    updatedAt: result[0].updatedAt, // updatedAt も返す
+    id: createdPost.id as PostId,
+    itemId: createdPost.itemId as ItemId,
+    authorId: createdPost.authorId as UserId,
+    content: createdPost.content,
+    createdAt: createdPost.createdAt,
+    updatedAt: createdPost.updatedAt,
   };
 
   try {
+    // Zod スキーマでパースして返す (CreatedPostSchema は author/item を要求しない)
     return CreatedPostSchema.parse(postObject);
   } catch (error) {
     console.error('Failed to parse created post:', error);
@@ -85,54 +100,39 @@ export const createPost = async (userId: UserId, input: CreatePostInput) => {
 /**
  * 指定されたIDのポストを取得します
  * @param postId ポストID
- * @returns ポスト情報（投稿者情報を含む）
+ * @returns ポスト情報（投稿者情報、アイテム簡易情報を含む）
  */
 export const getPostById = async (postId: PostId) => {
-  // db.select() を使って関連情報も取得
-  const result = await db
-    .select({
-      post: {
-        id: posts.id,
-        itemId: posts.itemId,
-        authorId: posts.authorId,
-        content: posts.content,
-        createdAt: posts.createdAt,
-        updatedAt: posts.updatedAt,
-      },
-      author: {
-        id: users.id,
-        username: users.username,
-        avatarUrl: users.avatarUrl,
-      },
-      item: {
-        id: items.id,
-        name: items.name,
-      },
-    })
-    .from(posts)
-    .leftJoin(users, eq(posts.authorId, users.id))
-    .leftJoin(items, eq(posts.itemId, items.id))
-    .where(eq(posts.id, postId as number))
-    .limit(1);
-
-  if (result.length === 0) {
+  // 1. ポスト基本情報を取得
+  const post = await postRepository.findPostById(postId);
+  if (!post) {
     throw new HTTPException(404, { message: '投稿が見つかりませんでした' });
   }
-  const data = result[0];
 
-  // 戻り値オブジェクトを作成
+  // 2. 投稿者情報を取得
+  const author = await userRepository.findUserById(post.authorId as UserId);
+  // 著者が見つからないケースも考慮 (DB不整合など)
+  const safeAuthor = AuthorInfoSchema.safeParse(author);
+
+  // 3. アイテム簡易情報を取得
+  const item = await itemRepository.findItemById(post.itemId as ItemId);
+  // アイテムが見つからないケースも考慮
+  const safeItem = ItemSummarySchema.safeParse(item ? { id: item.id, name: item.name } : null);
+
+  // 4. 結合して PostDetailsSchema に合わせて整形
   const postDetailObject = {
-    id: data.post.id,
-    itemId: data.post.itemId,
-    authorId: data.post.authorId,
-    content: data.post.content,
-    createdAt: data.post.createdAt,
-    updatedAt: data.post.updatedAt,
-    author: data.author, // AuthorInfoSchema でパースされる想定
-    item: data.item, // item スキーマでパースされる想定
+    id: post.id as PostId,
+    itemId: post.itemId as ItemId,
+    authorId: post.authorId as UserId,
+    content: post.content,
+    createdAt: post.createdAt,
+    updatedAt: post.updatedAt,
+    author: safeAuthor.success ? safeAuthor.data : null,
+    item: safeItem.success ? safeItem.data : null,
   };
 
   try {
+    // Zod スキーマでパースして返す
     return PostDetailsSchema.parse(postDetailObject);
   } catch (error) {
     console.error(`Failed to parse post detail ID ${postId}:`, error);
@@ -143,57 +143,57 @@ export const getPostById = async (postId: PostId) => {
 /**
  * 指定されたアイテムに関連するポスト一覧を取得します
  * @param itemId アイテムID
- * @returns ポスト一覧（投稿者情報を含む）
+ * @returns ポスト一覧（投稿者情報、アイテム簡易情報を含む）
  */
 export const getItemPosts = async (itemId: ItemId) => {
-  // db.select() を使って関連情報も取得
-  const results = await db
-    .select({
-      post: {
-        id: posts.id,
-        itemId: posts.itemId,
-        authorId: posts.authorId,
-        content: posts.content,
-        createdAt: posts.createdAt,
-        updatedAt: posts.updatedAt,
-      },
-      author: {
-        id: users.id,
-        username: users.username,
-        avatarUrl: users.avatarUrl,
-      },
-      // アイテム情報は itemId で分かっているので不要かも？
-      // スキーマに合わせて item も含めるなら Join する
-      item: {
-        id: items.id,
-        name: items.name,
-      },
-    })
-    .from(posts)
-    .leftJoin(users, eq(posts.authorId, users.id))
-    .leftJoin(items, eq(posts.itemId, items.id)) // Item情報もJOIN
-    .where(eq(posts.itemId, itemId as number))
-    .orderBy(desc(posts.createdAt));
+  // 0. アイテムが存在するか、簡易情報を取得 (リスト内の全ポストで共通)
+  const item = await itemRepository.findItemById(itemId);
+  if (!item) {
+    // アイテムが存在しない場合は空リストを返すか、404エラーを投げるか（ここでは空リスト）
+    // throw new HTTPException(404, { message: '指定されたアイテムが見つかりません' });
+    return [];
+  }
+  const safeItem = ItemSummarySchema.safeParse({ id: item.id, name: item.name });
+  const itemSummary = safeItem.success ? safeItem.data : null;
 
-  // 各ポストをパースして返す (失敗したものは除外)
-  return results
-    .map((data) => {
+  // 1. アイテムに紐づくポスト一覧を取得 (リポジトリは Post[] を返す想定)
+  const postsList = await postRepository.findPostsByItemId(itemId);
+  if (postsList.length === 0) {
+    return [];
+  }
+
+  // 2. 投稿者のIDリストを作成し、ユーザー情報を一括取得
+  const authorIds = postsList.map((p) => p.authorId as UserId);
+  const uniqueAuthorIds = [...new Set(authorIds)];
+  const authors = await userRepository.findUsersByIds(uniqueAuthorIds);
+  const authorMap = new Map<UserId, User>(authors.map((u) => [u.id as UserId, u]));
+
+  // 3. ポストリストと著者情報を結合して PostDetailsSchema の配列を作成
+  const postsWithDetails = postsList
+    .map((post) => {
+      const author = authorMap.get(post.authorId as UserId) ?? null;
+      const safeAuthor = AuthorInfoSchema.safeParse(author);
+
       const postDetailObject = {
-        id: data.post.id,
-        itemId: data.post.itemId,
-        authorId: data.post.authorId,
-        content: data.post.content,
-        createdAt: data.post.createdAt,
-        updatedAt: data.post.updatedAt,
-        author: data.author,
-        item: data.item,
+        id: post.id as PostId,
+        itemId: post.itemId as ItemId,
+        authorId: post.authorId as UserId,
+        content: post.content,
+        createdAt: post.createdAt,
+        updatedAt: post.updatedAt,
+        author: safeAuthor.success ? safeAuthor.data : null,
+        item: itemSummary, // 全ポストで共通のアイテム情報
       };
+
+      // 各ポストをパース (不正なデータは除外)
       try {
         return PostDetailsSchema.parse(postDetailObject);
       } catch (error) {
-        console.error(`Failed to parse post ID ${data.post.id} for item ${itemId}:`, error);
+        console.error(`Failed to parse post ID ${post.id} for item ${itemId}:`, error);
         return null;
       }
     })
-    .filter((post): post is z.infer<typeof PostDetailsSchema> => post !== null);
+    .filter((p): p is z.infer<typeof PostDetailsSchema> => p !== null);
+
+  return postsWithDetails;
 };

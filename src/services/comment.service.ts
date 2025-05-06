@@ -1,23 +1,23 @@
-import { db } from '../db';
-import { comments, posts, users, type NewComment } from '../db/schema';
 import { type CreateCommentInput } from '../models/comment.model';
 import { HTTPException } from 'hono/http-exception';
-import { eq, asc } from 'drizzle-orm';
 import type { UserId, PostId, CommentId } from '../types/branded.d';
 import { z } from 'zod';
 import { UserIdSchema, PostIdSchema, CommentIdSchema } from '../types/branded.d';
-import console from 'console';
+import { commentRepository } from '../repositories/comment.repository';
+import { userRepository } from '../repositories/user.repository';
+import { postRepository } from '../repositories/post.repository';
+import type { User } from '../db/schema';
 
-// Author情報のZodスキーマ定義
+// Author情報のZodスキーマ定義 (User から必要な情報のみを選択)
 const AuthorInfoSchema = z
   .object({
     id: UserIdSchema,
     username: z.string(),
-    avatarUrl: z.string().nullable(),
+    avatarUrl: z.string().nullable().optional(),
   })
   .nullable();
 
-// createComment の戻り値スキーマ
+// createComment の戻り値スキーマ (createdAt は Date 型)
 const CreatedCommentSchema = z.object({
   id: CommentIdSchema,
   postId: PostIdSchema,
@@ -27,7 +27,7 @@ const CreatedCommentSchema = z.object({
   author: AuthorInfoSchema,
 });
 
-// getPostComments の要素の戻り値スキーマ
+// getPostComments の要素の戻り値スキーマ (createdAt は Date 型)
 const CommentWithAuthorSchema = z.object({
   id: CommentIdSchema,
   postId: PostIdSchema,
@@ -42,50 +42,38 @@ const CommentWithAuthorSchema = z.object({
  * @param userId コメント投稿者のユーザーID
  * @param postId コメント対象の投稿ID
  * @param input コメント作成情報
- * @returns 作成されたコメント
+ * @returns 作成されたコメント (著者情報付き)
  */
 export const createComment = async (userId: UserId, postId: PostId, input: CreateCommentInput) => {
   // 投稿が存在するか確認
-  const postExists = await db
-    .select({ id: posts.id })
-    .from(posts)
-    .where(eq(posts.id, postId as number))
-    .limit(1);
-  if (postExists.length === 0) {
+  const postExists = await postRepository.findPostById(postId);
+  if (!postExists) {
     throw new HTTPException(404, { message: 'コメント対象の投稿が見つかりませんでした' });
   }
 
   // 新しいコメントを作成
-  const newComment: NewComment = {
-    authorId: userId as number,
-    postId: postId as number,
+  // NewComment 型は Repository 内部で処理される想定。Service では UserId/PostId をそのまま渡す
+  const newComment = {
+    authorId: userId,
+    postId: postId,
     content: input.content,
-    createdAt: new Date(),
   };
 
-  const result = await db.insert(comments).values(newComment).returning();
+  const createdCommentData = await commentRepository.createComment(newComment);
 
   // 作成されたコメントに投稿者情報を付加して返す
-  const commentData = result[0];
-  const authorResult = await db.query.users.findFirst({
-    where: eq(users.id, commentData.authorId),
-    columns: {
-      id: true,
-      username: true,
-      avatarUrl: true,
-    },
-  });
+  const author = await userRepository.findUserById(createdCommentData.authorId as UserId); // authorId は UserId のはず
 
-  // 取得した Author 情報をパースして型安全にする
-  const parsedAuthor = AuthorInfoSchema.safeParse(authorResult);
+  // 取得した Author 情報をパースして型安全にする (存在しない場合も考慮)
+  const parsedAuthor = AuthorInfoSchema.safeParse(author);
   const safeAuthor = parsedAuthor.success ? parsedAuthor.data : null;
 
   const createdCommentObject = {
-    id: commentData.id as CommentId,
-    postId: commentData.postId as PostId,
-    authorId: commentData.authorId as UserId,
-    content: commentData.content,
-    createdAt: commentData.createdAt,
+    id: createdCommentData.id as CommentId,
+    postId: createdCommentData.postId as PostId,
+    authorId: createdCommentData.authorId as UserId,
+    content: createdCommentData.content,
+    createdAt: createdCommentData.createdAt,
     author: safeAuthor,
   };
 
@@ -94,68 +82,64 @@ export const createComment = async (userId: UserId, postId: PostId, input: Creat
     return CreatedCommentSchema.parse(createdCommentObject);
   } catch (error) {
     console.error('Failed to parse created comment:', error);
-    // zod エラーの詳細をログに残すなどの処理を追加できる
     throw new HTTPException(500, { message: 'コメント作成後のデータ形式エラー' });
   }
 };
 
 /**
  * 指定された投稿のコメント一覧を取得します
+ * @param postId コメントを取得する投稿ID
+ * @returns コメントの配列 (各コメントに著者情報が付加される)
  */
 export const getPostComments = async (postId: PostId) => {
-  const postExists = await db
-    .select({ id: posts.id })
-    .from(posts)
-    .where(eq(posts.id, postId as number))
-    .limit(1);
-  if (postExists.length === 0) {
+  // 投稿が存在するか確認
+  const postExists = await postRepository.findPostById(postId);
+  if (!postExists) {
     throw new HTTPException(404, { message: '対象の投稿が見つかりませんでした' });
   }
 
-  // db.select() を使用してコメントと投稿者情報を取得
-  const results = await db
-    .select({
-      comment: {
-        id: comments.id,
-        postId: comments.postId,
-        authorId: comments.authorId,
-        content: comments.content,
-        createdAt: comments.createdAt,
-        // comments テーブルに updatedAt は存在しない
-      },
-      author: {
-        id: users.id,
-        username: users.username,
-        avatarUrl: users.avatarUrl,
-      },
-    })
-    .from(comments)
-    .leftJoin(users, eq(comments.authorId, users.id)) // 投稿者情報を結合
-    .where(eq(comments.postId, postId as number))
-    .orderBy(asc(comments.createdAt));
+  // コメント一覧を取得
+  const commentsOnly = await commentRepository.findCommentsByPostId(postId);
 
-  // 結果を整形し、Zodでパース
-  return results
-    .map((result) => {
-      const parsedAuthor = AuthorInfoSchema.safeParse(result.author); // leftJoin の結果 author は null の可能性がある
-      const safeAuthor = parsedAuthor.success ? parsedAuthor.data : null;
+  if (commentsOnly.length === 0) {
+    return [];
+  }
 
-      const commentObject = {
-        id: result.comment.id as CommentId,
-        postId: result.comment.postId as PostId,
-        authorId: result.comment.authorId as UserId,
-        content: result.comment.content,
-        createdAt: result.comment.createdAt,
-        author: safeAuthor,
-      };
+  // コメント投稿者のIDリストを作成
+  const authorIds = commentsOnly.map((comment) => comment.authorId as UserId);
+  // 重複を除去
+  const uniqueAuthorIds = [...new Set(authorIds)];
 
-      // 各コメントオブジェクトを parse する (失敗時は例外 or null)
-      try {
-        return CommentWithAuthorSchema.parse(commentObject);
-      } catch (error) {
-        console.error(`Failed to parse comment ID ${result.comment.id}:`, error);
-        return null; // parse に失敗した要素は null にする
-      }
-    })
-    .filter((comment): comment is z.infer<typeof CommentWithAuthorSchema> => comment !== null);
+  // ユーザー情報を一括取得
+  const authors = await userRepository.findUsersByIds(uniqueAuthorIds);
+  // ユーザーIDをキーとしたMapを作成 (効率的な検索のため)
+  const authorMap = new Map<UserId, User>(authors.map((user) => [user.id as UserId, user]));
+
+  // コメントに著者情報を付加
+  const commentsWithAuthors = commentsOnly.map((comment) => {
+    const author = authorMap.get(comment.authorId as UserId) ?? null; // 見つからない場合は null
+    // AuthorInfoSchema でパースして安全な形式にする
+    const parsedAuthor = AuthorInfoSchema.safeParse(author);
+    const safeAuthor = parsedAuthor.success ? parsedAuthor.data : null;
+
+    return {
+      id: comment.id as CommentId,
+      postId: comment.postId as PostId,
+      authorId: comment.authorId as UserId,
+      content: comment.content,
+      createdAt: comment.createdAt,
+      author: safeAuthor,
+    };
+  });
+
+  // 結果配列全体をスキーマで parse する (要素ごとに行う方がエラー箇所特定は容易だが、ここでは一括)
+  try {
+    return z.array(CommentWithAuthorSchema).parse(commentsWithAuthors);
+  } catch (error) {
+    console.error('Failed to parse comments with authors:', error);
+    throw new HTTPException(500, { message: 'コメント取得後のデータ形式エラー' });
+  }
 };
+
+// TODO: Add deleteComment function (requires checking ownership)
+// TODO: Add updateComment function? (less common for comments)
