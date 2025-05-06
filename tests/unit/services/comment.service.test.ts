@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createComment, getPostComments } from '../../../src/services/comment.service';
+import { createComment, getPostComments, deleteComment } from '../../../src/services/comment.service';
 import { HTTPException } from 'hono/http-exception';
 import type { Comment, User, Post, NewComment } from '../../../src/db/schema';
 import type { UserId, PostId, CommentId } from '../../../src/types/branded.d';
@@ -9,34 +9,34 @@ vi.mock('../../../src/repositories/comment.repository', () => ({
   commentRepository: {
     createComment: vi.fn(),
     findCommentsByPostId: vi.fn(),
-    findCommentById: vi.fn(), // deleteComment 用なども含めておく
+    findCommentById: vi.fn(),
     deleteComment: vi.fn(),
   },
 }));
 vi.mock('../../../src/repositories/user.repository', () => ({
   userRepository: {
-    findUserByEmail: vi.fn(), // サービスで使われている (仮)
-    findUserByUsername: vi.fn(), // 他のテストで必要になるかも
-    createUser: vi.fn(),
-    // TODO: findUserById, findUsersByIds を追加した方が良い
+    findUserById: vi.fn(), // createComment で使用
+    findUsersByIds: vi.fn(), // getPostComments で使用
+    // findUserByEmail: vi.fn(), // 不要になった
+    // findUserByUsername: vi.fn(),
+    // createUser: vi.fn(),
+  },
+}));
+vi.mock('../../../src/repositories/post.repository', () => ({
+  // PostRepository のモックを追加
+  postRepository: {
+    findPostById: vi.fn(), // 投稿存在確認で使用
   },
 }));
 
-// 一時的に残っている db アクセスもモック
-// TODO: PostRepository 導入後に削除
-const mockDb = {
-  select: vi.fn().mockReturnThis(),
-  from: vi.fn().mockReturnThis(),
-  where: vi.fn().mockReturnThis(),
-  limit: vi.fn(),
-};
-vi.mock('../../../src/db', () => ({
-  db: mockDb,
-}));
+// 古い DB モックは削除
+// const mockDb = { ... };
+// vi.mock('../../../src/db', ...);
 
 describe('Comment Service', () => {
   let mockCommentRepository: any;
   let mockUserRepository: any;
+  let mockPostRepository: any; // PostRepository のモック変数を追加
 
   beforeEach(async () => {
     // モックされたリポジトリを取得
@@ -44,13 +44,16 @@ describe('Comment Service', () => {
     mockCommentRepository = vi.mocked(commentRepoModule.commentRepository);
     const userRepoModule = await import('../../../src/repositories/user.repository');
     mockUserRepository = vi.mocked(userRepoModule.userRepository);
+    const postRepoModule = await import('../../../src/repositories/post.repository'); // 追加
+    mockPostRepository = vi.mocked(postRepoModule.postRepository); // 追加
 
     // モックをリセット
     vi.clearAllMocks();
-    mockDb.select.mockClear(); // db モックもクリア
-    mockDb.from.mockClear();
-    mockDb.where.mockClear();
-    mockDb.limit.mockClear();
+    // 古いDBモックのクリア処理は削除
+    // mockDb.select.mockClear();
+    // mockDb.from.mockClear();
+    // mockDb.where.mockClear();
+    // mockDb.limit.mockClear();
   });
 
   // --- createComment Tests ---
@@ -70,17 +73,17 @@ describe('Comment Service', () => {
 
     it('should create a comment, fetch author, and return parsed comment', async () => {
       // Arrange
-      mockDb.limit.mockResolvedValue([{ id: postId }]); // 投稿は存在する (型を緩くする)
+      mockPostRepository.findPostById.mockResolvedValue({ id: postId }); // 投稿は存在する (型を緩くする)
       mockCommentRepository.createComment.mockResolvedValue(createdDbComment);
-      mockUserRepository.findUserByEmail.mockResolvedValue(mockAuthor as User); // 投稿者情報取得成功
+      mockUserRepository.findUserById.mockResolvedValue(mockAuthor as User); // 投稿者情報取得成功
 
       // Act
       const result = await createComment(userId, postId, input);
 
       // Assert
-      expect(mockDb.limit).toHaveBeenCalledTimes(1); // 投稿存在確認
+      expect(mockPostRepository.findPostById).toHaveBeenCalledTimes(1); // 投稿存在確認
       expect(mockCommentRepository.createComment).toHaveBeenCalledWith(expect.objectContaining(newComment));
-      expect(mockUserRepository.findUserByEmail).toHaveBeenCalledWith(userId as unknown as string); // 仮の呼び出し
+      expect(mockUserRepository.findUserById).toHaveBeenCalledWith(userId);
       expect(result.id).toBe(createdDbComment.id);
       expect(result.content).toBe(createdDbComment.content);
       expect(result.author?.id).toBe(mockAuthor.id);
@@ -90,7 +93,7 @@ describe('Comment Service', () => {
 
     it('should throw 404 if post does not exist', async () => {
       // Arrange
-      mockDb.limit.mockResolvedValue([]); // 投稿が存在しない
+      mockPostRepository.findPostById.mockResolvedValue(null); // 投稿が存在しない
 
       // Act & Assert
       await expect(createComment(userId, postId, input)).rejects.toThrow(HTTPException);
@@ -100,7 +103,7 @@ describe('Comment Service', () => {
 
     it('should handle error during comment creation', async () => {
       // Arrange
-      mockDb.limit.mockResolvedValue([{ id: postId }]);
+      mockPostRepository.findPostById.mockResolvedValue({ id: postId } as unknown as Post); // 型アサーション修正
       const dbError = new Error('Comment DB Error');
       mockCommentRepository.createComment.mockRejectedValue(dbError);
 
@@ -110,16 +113,33 @@ describe('Comment Service', () => {
 
     it('should handle error when fetching author fails', async () => {
       // Arrange
-      mockDb.limit.mockResolvedValue([{ id: postId }]);
+      mockPostRepository.findPostById.mockResolvedValue({ id: postId } as unknown as Post); // 型アサーション修正
       mockCommentRepository.createComment.mockResolvedValue(createdDbComment);
       const authorError = new Error('Author Fetch Error');
-      mockUserRepository.findUserByEmail.mockRejectedValue(authorError);
+      mockUserRepository.findUserById.mockRejectedValue(authorError);
 
       // Act & Assert
       await expect(createComment(userId, postId, input)).rejects.toThrow(authorError);
     });
 
-    // TODO: Zod パース失敗時のテスト
+    it('should throw 500 if created comment parsing fails', async () => {
+      // Arrange
+      mockPostRepository.findPostById.mockResolvedValue({ id: postId } as unknown as Post);
+      // createdAt を不正な値 (null) にして返すようにモックを設定
+      const invalidCreatedDbComment = { ...createdDbComment, createdAt: null };
+      mockCommentRepository.createComment.mockResolvedValue(invalidCreatedDbComment as Comment); // 型アサーションで強制
+      mockUserRepository.findUserById.mockResolvedValue(mockAuthor as User);
+
+      // Act & Assert
+      await expect(createComment(userId, postId, input)).rejects.toThrow(HTTPException);
+      // 2回呼び出すのは冗長なので1回に修正
+      const error = await createComment(userId, postId, input).catch((e) => e);
+      expect(error).toBeInstanceOf(HTTPException);
+      expect(error.status).toBe(500);
+
+      expect(mockCommentRepository.createComment).toHaveBeenCalledTimes(2); // 2回呼ばれることを期待 (上の expect と合わせて)
+      expect(mockUserRepository.findUserById).toHaveBeenCalledTimes(2); // 同上
+    });
   });
 
   // --- getPostComments Tests ---
@@ -144,19 +164,17 @@ describe('Comment Service', () => {
 
     it('should return comments with author info successfully', async () => {
       // Arrange
-      mockDb.limit.mockResolvedValue([{ id: postId }]); // 投稿存在
+      mockPostRepository.findPostById.mockResolvedValue({ id: postId } as unknown as Post); // 型アサーション修正
       mockCommentRepository.findCommentsByPostId.mockResolvedValue([mockComment1, mockComment2]);
-      mockUserRepository.findUserByEmail
-        .mockResolvedValueOnce(mockAuthor1 as User)
-        .mockResolvedValueOnce(mockAuthor2 as User);
+      mockUserRepository.findUsersByIds.mockResolvedValue([mockAuthor1, mockAuthor2] as User[]);
 
       // Act
       const results = await getPostComments(postId);
 
       // Assert
-      expect(mockDb.limit).toHaveBeenCalledTimes(1);
+      expect(mockPostRepository.findPostById).toHaveBeenCalledTimes(1);
       expect(mockCommentRepository.findCommentsByPostId).toHaveBeenCalledWith(postId);
-      expect(mockUserRepository.findUserByEmail).toHaveBeenCalledTimes(2);
+      expect(mockUserRepository.findUsersByIds).toHaveBeenCalledWith([mockComment1.authorId, mockComment2.authorId]);
       expect(results.length).toBe(2);
       if (results.length === 2) {
         expect(results[0].id).toBe(mockComment1.id);
@@ -168,7 +186,7 @@ describe('Comment Service', () => {
 
     it('should return empty array if no comments found', async () => {
       // Arrange
-      mockDb.limit.mockResolvedValue([{ id: postId }]);
+      mockPostRepository.findPostById.mockResolvedValue({ id: postId } as unknown as Post); // 型アサーション修正
       mockCommentRepository.findCommentsByPostId.mockResolvedValue([]);
 
       // Act
@@ -176,12 +194,12 @@ describe('Comment Service', () => {
 
       // Assert
       expect(results).toEqual([]);
-      expect(mockUserRepository.findUserByEmail).not.toHaveBeenCalled();
+      expect(mockUserRepository.findUsersByIds).not.toHaveBeenCalled(); // ユーザー取得は呼ばれない
     });
 
     it('should throw 404 if post does not exist', async () => {
       // Arrange
-      mockDb.limit.mockResolvedValue([]); // 投稿が存在しない
+      mockPostRepository.findPostById.mockResolvedValue(null); // 投稿が存在しない
 
       // Act & Assert
       await expect(getPostComments(postId)).rejects.toThrow(HTTPException);
@@ -189,11 +207,115 @@ describe('Comment Service', () => {
       expect(mockCommentRepository.findCommentsByPostId).not.toHaveBeenCalled();
     });
 
-    // TODO: Handle repository errors during comment fetch
-    // TODO: Handle repository errors during author fetch
-    // TODO: Test filtering of comments that fail Zod parsing
+    it('should propagate error if author fetch fails', async () => {
+      // Arrange
+      mockPostRepository.findPostById.mockResolvedValue({ id: postId } as unknown as Post); // 投稿は存在する
+      mockCommentRepository.findCommentsByPostId.mockResolvedValue([mockComment1]); // コメントは存在する
+      const dbError = new Error('Author Fetch DB Error');
+      mockUserRepository.findUsersByIds.mockRejectedValue(dbError); // ユーザー取得でエラー発生
+
+      // Act & Assert
+      await expect(getPostComments(postId)).rejects.toThrow(dbError);
+      expect(mockCommentRepository.findCommentsByPostId).toHaveBeenCalledWith(postId); // コメント取得は呼ばれる
+      expect(mockUserRepository.findUsersByIds).toHaveBeenCalledWith([mockComment1.authorId]); // ユーザー取得も呼ばれる
+    });
+
+    it('should throw 500 if comment parsing fails', async () => {
+      // Arrange
+      mockPostRepository.findPostById.mockResolvedValue({ id: postId } as unknown as Post);
+      // createdAt が null の不正なコメントデータを返すように設定
+      const invalidComment = { ...mockComment1, createdAt: null };
+      mockCommentRepository.findCommentsByPostId.mockResolvedValue([invalidComment as unknown as Comment]); // 型アサーションで強制
+      // 著者情報は正常に取得できるとする
+      mockUserRepository.findUsersByIds.mockResolvedValue([mockAuthor1 as User]);
+
+      // Act & Assert
+      // parse でエラーになるため、HTTPException(500) がスローされるはず
+      await expect(getPostComments(postId)).rejects.toThrow(HTTPException);
+      // 念のためステータスコードも確認 (catch を使う形に統一)
+      const error = await getPostComments(postId).catch((e) => e);
+      expect(error).toBeInstanceOf(HTTPException);
+      expect(error.status).toBe(500);
+
+      // 各リポジトリが1回ずつ呼ばれることを確認 (catch の呼び出しと合わせて2回)
+      // Note: 1回目と2回目の呼び出しで期待する呼び出し回数を明示
+      expect(mockCommentRepository.findCommentsByPostId).toHaveBeenCalledTimes(2);
+      expect(mockUserRepository.findUsersByIds).toHaveBeenCalledTimes(2);
+    });
   });
 
-  // --- deleteComment Test (assuming a service method exists) ---
-  // describe('deleteComment', () => { ... });
+  // --- deleteComment Tests ---
+  describe('deleteComment', () => {
+    const commentId = 301 as CommentId;
+    const ownerUserId = 1 as UserId;
+    const otherUserId = 2 as UserId;
+    const mockComment: Comment = {
+      id: commentId,
+      postId: 101 as PostId,
+      authorId: ownerUserId, // このコメントの所有者は ownerUserId
+      content: 'Delete me',
+      createdAt: new Date(),
+    };
+
+    it('should allow owner to delete their comment', async () => {
+      // Arrange
+      mockCommentRepository.findCommentById.mockResolvedValue(mockComment); // コメントは見つかる
+      mockCommentRepository.deleteComment.mockResolvedValue(true); // 削除成功
+
+      // Act
+      await deleteComment(commentId, ownerUserId);
+
+      // Assert
+      expect(mockCommentRepository.findCommentById).toHaveBeenCalledWith(commentId);
+      expect(mockCommentRepository.deleteComment).toHaveBeenCalledWith(commentId, ownerUserId);
+    });
+
+    it('should throw 404 if comment not found', async () => {
+      // Arrange
+      mockCommentRepository.findCommentById.mockResolvedValue(null); // コメントが見つからない
+
+      // Act & Assert
+      await expect(deleteComment(commentId, ownerUserId)).rejects.toThrow(HTTPException);
+      // 2回呼び出しを避けるため catch を使用
+      const error = await deleteComment(commentId, ownerUserId).catch((e) => e);
+      expect(error).toBeInstanceOf(HTTPException);
+      expect(error.status).toBe(404);
+      expect(mockCommentRepository.deleteComment).not.toHaveBeenCalled(); // delete は呼ばれない
+      // 呼び出し回数をリセット (前の expect で呼ばれるため)
+      mockCommentRepository.findCommentById.mockClear();
+    });
+
+    it('should throw 403 if user is not the owner', async () => {
+      // Arrange
+      mockCommentRepository.findCommentById.mockResolvedValue(mockComment); // コメントは見つかる
+
+      // Act & Assert
+      // otherUserId で削除しようとする
+      await expect(deleteComment(commentId, otherUserId)).rejects.toThrow(HTTPException);
+      // 2回呼び出しを避けるため catch を使用
+      const error = await deleteComment(commentId, otherUserId).catch((e) => e);
+      expect(error).toBeInstanceOf(HTTPException);
+      expect(error.status).toBe(403);
+      expect(mockCommentRepository.deleteComment).not.toHaveBeenCalled(); // delete は呼ばれない
+      // 呼び出し回数をリセット (前の expect で呼ばれるため)
+      mockCommentRepository.findCommentById.mockClear();
+    });
+
+    it('should throw 500 if repository deletion fails', async () => {
+      // Arrange
+      mockCommentRepository.findCommentById.mockResolvedValue(mockComment); // コメントは見つかる
+      mockCommentRepository.deleteComment.mockResolvedValue(false); // 削除失敗
+
+      // Act & Assert
+      await expect(deleteComment(commentId, ownerUserId)).rejects.toThrow(HTTPException);
+      // 2回呼び出しを避けるため catch を使用
+      const error = await deleteComment(commentId, ownerUserId).catch((e) => e);
+      expect(error).toBeInstanceOf(HTTPException);
+      expect(error.status).toBe(500);
+      expect(mockCommentRepository.deleteComment).toHaveBeenCalledWith(commentId, ownerUserId);
+      // 呼び出し回数をリセット (前の expect で呼ばれるため)
+      mockCommentRepository.findCommentById.mockClear();
+      mockCommentRepository.deleteComment.mockClear();
+    });
+  });
 });

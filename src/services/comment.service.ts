@@ -141,5 +141,36 @@ export const getPostComments = async (postId: PostId) => {
   }
 };
 
-// TODO: Add deleteComment function (requires checking ownership)
+/**
+ * 指定されたコメントを削除します。
+ * 削除を実行できるのはコメントの作成者のみです。
+ * @param commentId 削除するコメントのID
+ * @param userId 削除操作を行うユーザーのID
+ * @throws {HTTPException} コメントが見つからない(404)、権限がない(403)、削除に失敗(500)した場合
+ */
+export const deleteComment = async (commentId: CommentId, userId: UserId): Promise<void> => {
+  // 1. コメントを取得して存在確認
+  const comment = await commentRepository.findCommentById(commentId);
+  if (!comment) {
+    throw new HTTPException(404, { message: '削除対象のコメントが見つかりませんでした' });
+  }
+
+  // 3. 所有者確認
+  if (comment.authorId !== userId) {
+    throw new HTTPException(403, { message: 'コメントを削除する権限がありません' });
+  }
+
+  // 5. コメント削除
+  const deleted = await commentRepository.deleteComment(commentId, userId);
+
+  // 6. 削除結果確認 (リポジトリ層で既に所有者確認込みで削除しているので、基本的には成功するはず)
+  if (!deleted) {
+    // ここに来ることは稀だが、念のためエラーハンドリング
+    console.error(`Failed to delete comment ${commentId} even after ownership check.`);
+    throw new HTTPException(500, { message: 'コメントの削除に失敗しました' });
+  }
+
+  // 7. 成功 (void なので return なし)
+};
+
 // TODO: Add updateComment function? (less common for comments)
